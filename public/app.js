@@ -62,21 +62,12 @@ function meTag() {
 }
 
 // ── Auth ───────────────────────────────────────────────────────────────────
-async function showLoginScreen() {
+function showLoginScreen() {
   document.getElementById('login-screen').classList.add('visible');
   document.getElementById('login-form').reset();
   const err = document.getElementById('login-error');
   if (err) { err.textContent = ''; err.classList.add('hidden'); }
-
-  try {
-    const ms = await fetch('/api/members').then(r => r.json());
-    const setupSection = document.getElementById('setup-section');
-    if (ms.length === 0) {
-      setupSection.classList.remove('hidden');
-    } else {
-      setupSection.classList.add('hidden');
-    }
-  } catch (_) {}
+  document.querySelector('nav').style.display = '';
 }
 
 function hideLoginScreen() {
@@ -111,7 +102,7 @@ document.getElementById('login-form').onsubmit = async (e) => {
     currentUser = data.member;
     members = await fetch('/api/members').then(r => r.json());
     hideLoginScreen();
-    navigate('dashboard');
+    navigate(currentUser.isAdmin ? 'admin' : 'dashboard');
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
@@ -120,26 +111,6 @@ document.getElementById('login-form').onsubmit = async (e) => {
   }
 };
 
-// First-time setup: add member from login screen (no auth needed)
-async function setupAddMember(e) {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const name = fd.get('name').trim();
-  if (!name) return;
-  const btn = e.target.querySelector('button');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  try {
-    await fetch('/api/members', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-    e.target.reset();
-    // Refresh the setup list
-    const existing = document.getElementById('setup-members-list');
-    const ms = await fetch('/api/members').then(r => r.json());
-    if (existing) existing.innerHTML = ms.map(m => `<div class="flex items-center gap-2 py-1"><div class="w-6 h-6 rounded-full bg-blue-200 text-blue-700 flex items-center justify-center font-bold text-xs">${m.name[0].toUpperCase()}</div><span class="text-sm text-gray-700">${m.name}</span><span class="text-xs text-gray-400 ml-auto font-mono">${m.name.toLowerCase().replace(/\s+/g,'')}</span></div>`).join('');
-    const hint = document.getElementById('setup-login-hint');
-    if (ms.length > 0 && hint) hint.classList.remove('hidden');
-  } catch (err) { alert('Error: ' + err.message); }
-  btn.disabled = false; btn.textContent = 'Add Person';
-}
 
 async function logout() {
   if (!confirm('Log out?')) return;
@@ -194,11 +165,12 @@ function showChangePasswordModal() {
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navigate(page) {
   currentPage = page;
+  document.querySelector('nav').style.display = page === 'admin' ? 'none' : '';
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
   renderPage();
 }
 function renderPage() {
-  ({ dashboard: renderDashboard, bills: renderBills, tracking: renderTracking, settle: renderSettle, members: renderMembers })[currentPage]();
+  ({ dashboard: renderDashboard, bills: renderBills, tracking: renderTracking, settle: renderSettle, members: renderMembers, admin: renderAdmin })[currentPage]();
 }
 
 // ── Modal ──────────────────────────────────────────────────────────────────
@@ -1012,25 +984,19 @@ async function renderMembers() {
         </div>
       </div>
 
-      <!-- Add member -->
-      <button onclick="showAddMemberModal()" class="w-full bg-blue-500 text-white py-3 rounded-xl font-semibold shadow-sm">+ Add Person</button>
-
       <!-- Members list -->
       ${members.length === 0
         ? `<div class="text-center py-12"><p class="text-4xl mb-3">👥</p><p class="text-gray-500">No members yet</p></div>`
         : `<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-100">
             ${members.map((m, i) => `
-              <div class="flex items-center justify-between px-4 py-3.5 ${m.id === currentUser.id ? 'bg-blue-50' : ''}">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-base ${m.id === currentUser.id ? 'bg-blue-500 text-white' : COLORS[i % COLORS.length]}">
-                    ${m.name[0].toUpperCase()}
-                  </div>
-                  <div>
-                    <p class="font-semibold text-gray-800">${m.name} ${m.id === currentUser.id ? '<span class="text-xs text-blue-400">(you)</span>' : ''}</p>
-                    <p class="text-xs text-gray-400">Username: <span class="font-mono">${m.name.toLowerCase().replace(/\s+/g, '')}</span></p>
-                  </div>
+              <div class="flex items-center px-4 py-3.5 ${m.id === currentUser.id ? 'bg-blue-50' : ''}">
+                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-base ${m.id === currentUser.id ? 'bg-blue-500 text-white' : COLORS[i % COLORS.length]} flex-shrink-0">
+                  ${m.name[0].toUpperCase()}
                 </div>
-                ${m.id !== currentUser.id ? `<button onclick="deleteMember(${m.id}, '${m.name.replace(/'/g, "\\'")}')" class="text-sm text-red-400 font-medium px-3 py-1.5 border border-red-200 rounded-lg">Remove</button>` : ''}
+                <div class="ml-3">
+                  <p class="font-semibold text-gray-800">${m.name} ${m.id === currentUser.id ? '<span class="text-xs text-blue-400">(you)</span>' : ''}</p>
+                  <p class="text-xs text-gray-400">Username: <span class="font-mono">${m.name.toLowerCase().replace(/\s+/g, '')}</span></p>
+                </div>
               </div>
             `).join('')}
           </div>
@@ -1080,6 +1046,77 @@ async function deleteMember(id, name) {
   catch (err) { alert('Error: ' + err.message); }
 }
 
+// ── Admin ──────────────────────────────────────────────────────────────────
+async function renderAdmin() {
+  const app = document.getElementById('app');
+  members = await fetch('/api/members').then(r => r.json());
+  const COLORS = ['bg-blue-100 text-blue-600', 'bg-purple-100 text-purple-600', 'bg-green-100 text-green-600', 'bg-amber-100 text-amber-600', 'bg-rose-100 text-rose-600'];
+  app.innerHTML = `
+    <div class="px-4 pt-6 pb-6 space-y-4 slide-up">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-800">Admin</h1>
+          <p class="text-sm text-gray-400">Manage members</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="showChangePasswordModal()" class="text-sm text-gray-600 border border-gray-200 rounded-xl px-3 py-2">Password</button>
+          <button onclick="logout()" class="text-sm text-red-500 border border-red-100 rounded-xl px-3 py-2">Logout</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+        <h2 class="font-semibold text-gray-700 mb-3">Add Member</h2>
+        <form id="admin-add-form" onsubmit="adminAddMember(event)" class="flex gap-2" novalidate>
+          <input name="name" type="text" placeholder="Full name" autocomplete="off"
+            class="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-base focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <button type="submit" class="bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold text-sm">Add</button>
+        </form>
+        <p class="text-xs text-gray-400 mt-2">Login: <span class="font-mono">name</span> / <span class="font-mono">name@123</span></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2">
+          <h2 class="font-semibold text-gray-700">Members <span class="text-gray-400 font-normal text-sm">(${members.length})</span></h2>
+        </div>
+        ${members.length === 0
+          ? `<p class="px-4 pb-4 text-sm text-gray-400">No members yet.</p>`
+          : `<div class="divide-y divide-gray-50">
+              ${members.map((m, i) => `
+              <div class="flex items-center gap-3 px-4 py-3">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${COLORS[i % COLORS.length]}">${m.name[0].toUpperCase()}</div>
+                <div class="flex-1 min-w-0">
+                  <p class="font-medium text-gray-800 text-sm">${m.name}</p>
+                  <p class="text-xs text-gray-400 font-mono">${m.name.toLowerCase().replace(/\s+/g, '')}</p>
+                </div>
+                <button onclick="adminRemoveMember('${m.id}','${m.name.replace(/'/g, "\\'")}')" class="text-red-400 text-sm border border-red-100 rounded-lg px-3 py-1.5 flex-shrink-0">Remove</button>
+              </div>`).join('')}
+            </div>`
+        }
+      </div>
+    </div>`;
+}
+
+async function adminAddMember(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const name = fd.get('name').trim();
+  if (!name) return;
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    await POST('/api/members', { name });
+    e.target.reset();
+    await renderAdmin();
+  } catch (err) { alert('Error: ' + err.message); }
+  btn.disabled = false; btn.textContent = 'Add';
+}
+
+async function adminRemoveMember(id, name) {
+  if (!confirm(`Remove ${name}? They will no longer be able to log in.`)) return;
+  try { await DEL(`/api/members/${id}`); await renderAdmin(); }
+  catch (err) { alert('Error: ' + err.message); }
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   const token = localStorage.getItem('ghazal_token');
@@ -1090,8 +1127,8 @@ async function init() {
     if (!data.ok) { localStorage.removeItem('ghazal_token'); showLoginScreen(); return; }
     const { member } = await data.json();
     currentUser = member;
-    members = await GET('/api/members');
-    navigate('dashboard');
+    members = await fetch('/api/members').then(r => r.json());
+    navigate(currentUser.isAdmin ? 'admin' : 'dashboard');
   } catch (e) {
     document.getElementById('app').innerHTML = `
       <div class="flex flex-col items-center justify-center h-screen gap-4 p-8">

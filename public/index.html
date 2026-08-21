@@ -24,42 +24,23 @@
 <body class="bg-gray-50 font-sans">
 
   <!-- Login screen (full-page overlay) -->
-  <div id="login-screen" class="fixed inset-0 z-[70] bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 items-center justify-center p-6 overflow-y-auto">
-    <div class="w-full max-w-sm my-auto py-4">
+  <div id="login-screen" class="fixed inset-0 z-[70] bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 items-center justify-center p-6">
+    <div class="w-full max-w-sm">
       <div class="text-center mb-8">
         <h1 class="text-5xl font-black text-white tracking-tight">Ghazal</h1>
         <p class="text-blue-200 mt-2 text-lg font-medium">South 11</p>
       </div>
-
-      <!-- First-time setup (hidden until needed) -->
-      <div id="setup-section" class="hidden mb-4">
-        <div class="bg-white rounded-3xl p-6 shadow-2xl">
-          <h2 class="text-base font-bold text-gray-800 mb-0.5">First-time setup</h2>
-          <p class="text-sm text-gray-500 mb-4">Add all room members, then log in.</p>
-          <form onsubmit="setupAddMember(event)" class="flex gap-2 mb-3" novalidate>
-            <input name="name" type="text" placeholder="Person's name" autocomplete="off"
-              class="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-base focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <button type="submit" class="bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold text-sm whitespace-nowrap">Add Person</button>
-          </form>
-          <div id="setup-members-list" class="space-y-1.5"></div>
-          <div id="setup-login-hint" class="hidden mt-4 p-3 bg-green-50 border border-green-100 rounded-xl text-sm text-green-700 text-center font-medium">
-            All done! Log in below using your name as username.
-          </div>
-        </div>
-      </div>
-
-      <!-- Login form -->
       <div class="bg-white rounded-3xl p-7 shadow-2xl">
         <form id="login-form" class="space-y-4" novalidate>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">Username</label>
-            <input name="username" type="text" placeholder="yourname" autocomplete="username"
+            <input name="username" type="text" placeholder="Username" autocomplete="username"
               class="w-full border border-gray-200 rounded-xl px-4 py-3 bg-gray-50 text-base focus:outline-none focus:ring-2 focus:ring-blue-500">
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
             <div class="relative">
-              <input name="password" id="pwd-input" type="password" placeholder="yourname@123" autocomplete="current-password"
+              <input name="password" id="pwd-input" type="password" placeholder="Password" autocomplete="current-password"
                 class="w-full border border-gray-200 rounded-xl px-4 py-3 bg-gray-50 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 pr-12">
               <button type="button" onclick="togglePwd()" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm px-1">👁</button>
             </div>
@@ -67,10 +48,6 @@
           <div id="login-error" class="text-red-500 text-sm text-center py-1 hidden"></div>
           <button type="submit" id="login-btn" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-bold text-base shadow-sm">Sign In</button>
         </form>
-        <p class="text-center text-xs text-gray-400 mt-5 leading-relaxed">
-          Default login:<br>
-          <span class="font-mono bg-gray-100 px-1 rounded">yourname</span> / <span class="font-mono bg-gray-100 px-1 rounded">yourname@123</span>
-        </p>
       </div>
     </div>
   </div>

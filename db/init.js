@@ -1,8 +1,7 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ghazal';
-
-mongoose.connect(MONGO_URI).then(() => console.log('MongoDB connected')).catch(e => { console.error('MongoDB error:', e.message); process.exit(1); });
 
 const memberSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },
@@ -10,12 +9,14 @@ const memberSchema = new mongoose.Schema({
 });
 
 const authSchema = new mongoose.Schema({
-  member_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', required: true, unique: true },
+  member_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', default: null },
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   token: { type: String, default: null },
+  isAdmin: { type: Boolean, default: false },
   created_at: { type: Date, default: Date.now }
 });
+authSchema.index({ member_id: 1 }, { unique: true, sparse: true });
 
 const billSchema = new mongoose.Schema({
   type: { type: String, required: true },
@@ -62,5 +63,20 @@ const Bill = mongoose.model('Bill', billSchema);
 const TrackedItem = mongoose.model('TrackedItem', trackedItemSchema);
 const TrackedLog = mongoose.model('TrackedLog', trackedLogSchema);
 const Settlement = mongoose.model('Settlement', settlementSchema);
+
+function hashPwd(pwd) {
+  return crypto.createHash('sha256').update(pwd + 'ghazal-south11-2024').digest('hex');
+}
+
+mongoose.connect(MONGO_URI)
+  .then(async () => {
+    console.log('MongoDB connected');
+    const admin = await Auth.findOne({ isAdmin: true });
+    if (!admin) {
+      await Auth.create({ username: 'admin', password: hashPwd('admin123'), isAdmin: true });
+      console.log('Admin account created (admin / admin123)');
+    }
+  })
+  .catch(e => { console.error('MongoDB error:', e.message); process.exit(1); });
 
 module.exports = { Member, Auth, Bill, TrackedItem, TrackedLog, Settlement };

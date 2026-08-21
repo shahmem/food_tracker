@@ -17,17 +17,30 @@ async function requireAuth(req, res, next) {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '').trim();
     const auth = await Auth.findOne({ token }).populate('member_id');
-    if (!auth || !auth.member_id) return res.status(401).json({ error: 'Authentication required' });
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
     req.user = {
       auth_id: auth._id,
       username: auth.username,
       password: auth.password,
-      member_id: auth.member_id._id,
-      member_name: auth.member_id.name
+      isAdmin: auth.isAdmin,
+      member_id: auth.member_id?._id || null,
+      member_name: auth.member_id?.name || auth.username
     };
     next();
   } catch (e) {
     res.status(401).json({ error: 'Authentication required' });
+  }
+}
+
+async function requireAdmin(req, res, next) {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '').trim();
+    const auth = await Auth.findOne({ token, isAdmin: true });
+    if (!auth) return res.status(403).json({ error: 'Admin access required' });
+    req.user = { auth_id: auth._id, username: auth.username, password: auth.password, isAdmin: true };
+    next();
+  } catch (e) {
+    res.status(403).json({ error: 'Admin access required' });
   }
 }
 
@@ -45,14 +58,23 @@ router.post('/login', async (req, res) => {
     auth.token = token;
     await auth.save();
 
-    res.json({ token, member: { id: auth.member_id._id, name: auth.member_id.name } });
+    res.json({
+      token,
+      member: auth.isAdmin
+        ? { name: 'Admin', isAdmin: true }
+        : { id: auth.member_id._id, name: auth.member_id.name, isAdmin: false }
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 router.get('/me', requireAuth, (req, res) => {
-  res.json({ member: { id: req.user.member_id, name: req.user.member_name } });
+  res.json({
+    member: req.user.isAdmin
+      ? { name: 'Admin', isAdmin: true }
+      : { id: req.user.member_id, name: req.user.member_name, isAdmin: false }
+  });
 });
 
 router.post('/logout', requireAuth, async (req, res) => {
@@ -78,4 +100,4 @@ router.put('/password', requireAuth, async (req, res) => {
   }
 });
 
-module.exports = { router, requireAuth, hashPwd };
+module.exports = { router, requireAuth, requireAdmin, hashPwd };

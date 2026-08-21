@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { Member, Auth } = require('../db/init');
+const { requireAdmin } = require('./auth');
 
 function hashPwd(pwd) {
   return crypto.createHash('sha256').update(pwd + 'ghazal-south11-2024').digest('hex');
@@ -20,7 +21,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
@@ -36,9 +37,10 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     await Member.findByIdAndDelete(req.params.id);
+    await Auth.deleteOne({ member_id: req.params.id });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
