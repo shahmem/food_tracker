@@ -1,40 +1,48 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const db = require('../db/init');
+const { Member, Auth } = require('../db/init');
 
-// must match auth.js salt
 function hashPwd(pwd) {
   return crypto.createHash('sha256').update(pwd + 'ghazal-south11-2024').digest('hex');
 }
 
-router.get('/', (req, res) => {
-  const members = db.prepare('SELECT * FROM members ORDER BY name').all();
-  res.json(members);
-});
+function fmt(m) {
+  return { id: m._id, name: m.name, created_at: m.created_at };
+}
 
-router.post('/', (req, res) => {
-  const { name } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
+router.get('/', async (req, res) => {
   try {
-    const memberId = db.transaction(() => {
-      const r = db.prepare('INSERT INTO members (name) VALUES (?)').run(name.trim());
-      const id = r.lastInsertRowid;
-      const username = name.trim().toLowerCase().replace(/\s+/g, '');
-      db.prepare('INSERT INTO auth (member_id, username, password) VALUES (?, ?, ?)')
-        .run(id, username, hashPwd(`${username}@123`));
-      return id;
-    })();
-    res.status(201).json(db.prepare('SELECT * FROM members WHERE id = ?').get(memberId));
+    const members = await Member.find().sort('name');
+    res.json(members.map(fmt));
   } catch (e) {
-    if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'Member already exists' });
     res.status(500).json({ error: e.message });
   }
 });
 
-router.delete('/:id', (req, res) => {
-  db.prepare('DELETE FROM members WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+router.post('/', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
+
+    const member = await Member.create({ name: name.trim() });
+    const username = name.trim().toLowerCase().replace(/\s+/g, '');
+    await Auth.create({ member_id: member._id, username, password: hashPwd(`${username}@123`) });
+
+    res.status(201).json(fmt(member));
+  } catch (e) {
+    if (e.code === 11000) return res.status(400).json({ error: 'Member already exists' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/:id', async (req, res) => {
+  try {
+    await Member.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;
