@@ -590,9 +590,9 @@ async function renderTracking() {
                 </div>
               </div>
               <div class="flex gap-2 mt-3">
-                <button onclick="showAddStockModal(${item.id}, '${item.name.replace(/'/g, "\\'")}', ${item.price_per_unit}, '${item.unit}')"
+                <button onclick="showAddStockModal('${item.id}', '${item.name.replace(/'/g, "\\'")}', ${item.price_per_unit}, '${item.unit}')"
                   class="flex-1 bg-green-500 text-white py-2.5 rounded-xl text-sm font-semibold">+ Add Stock</button>
-                <button onclick="showUseStockModal(${item.id}, '${item.name.replace(/'/g, "\\'")}', '${item.unit}', ${item.current_stock})"
+                <button onclick="showUseStockModal('${item.id}', '${item.name.replace(/'/g, "\\'")}', '${item.unit}', ${item.current_stock})"
                   class="flex-1 bg-orange-500 text-white py-2.5 rounded-xl text-sm font-semibold">− Record Use</button>
               </div>
             </div>
