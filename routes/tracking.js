@@ -54,6 +54,22 @@ router.post('/items', async (req, res) => {
   }
 });
 
+router.put('/items/:id', async (req, res) => {
+  try {
+    const { name, unit, price_per_unit } = req.body;
+    const update = {};
+    if (name?.trim()) update.name = name.trim();
+    if (unit?.trim()) update.unit = unit.trim();
+    if (price_per_unit != null) update.price_per_unit = price_per_unit;
+    const item = await TrackedItem.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    res.json({ id: item._id, name: item.name, unit: item.unit, price_per_unit: item.price_per_unit });
+  } catch (e) {
+    if (e.code === 11000) return res.status(400).json({ error: 'Item name already exists' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.delete('/items/:id', async (req, res) => {
   try {
     await TrackedItem.findByIdAndDelete(req.params.id);

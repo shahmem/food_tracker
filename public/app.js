@@ -584,7 +584,10 @@ async function renderTracking() {
                     ${item.current_stock <= 5 ? '<span class="text-xs text-red-500 font-semibold ml-1">⚠ Low!</span>' : ''}
                   </div>
                 </div>
-                <button onclick="deleteTrackedItem(${item.id}, '${item.name.replace(/'/g, "\\'")}')" class="text-gray-300 text-sm ml-2 px-1">✕</button>
+                <div class="flex items-center gap-1 ml-2 flex-shrink-0">
+                  <button onclick="showEditItemModal('${item.id}','${item.name.replace(/'/g,"\\'")}','${item.unit}',${item.price_per_unit})" class="text-gray-300 text-sm px-1">✏️</button>
+                  <button onclick="deleteTrackedItem('${item.id}', '${item.name.replace(/'/g, "\\'")}')" class="text-gray-300 text-sm px-1">✕</button>
+                </div>
               </div>
               <div class="flex gap-2 mt-3">
                 <button onclick="showAddStockModal(${item.id}, '${item.name.replace(/'/g, "\\'")}', ${item.price_per_unit}, '${item.unit}')"
@@ -654,6 +657,49 @@ function showAddItemModal() {
     if (!name) { alert('Name is required.'); return; }
     try {
       await POST('/api/tracking/items', { name, unit: fd.get('unit')?.trim() || 'pieces', price_per_unit: parseFloat(fd.get('price_per_unit')) || 0 });
+      closeModal(); renderTracking();
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+function showEditItemModal(id, name, unit, price) {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-xl font-bold text-gray-800">Edit Item</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <form id="edit-item-form" class="space-y-4" novalidate>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Item Name</label>
+          <input name="name" type="text" value="${name}" required autofocus
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Unit</label>
+            <input name="unit" type="text" value="${unit}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Price per unit (₹)</label>
+            <input name="price_per_unit" type="number" min="0" step="0.01" value="${price}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Save Changes</button>
+      </form>
+    </div>
+  `);
+  document.getElementById('edit-item-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await PUT(`/api/tracking/items/${id}`, {
+        name: fd.get('name').trim(),
+        unit: fd.get('unit').trim() || unit,
+        price_per_unit: parseFloat(fd.get('price_per_unit')) || 0
+      });
       closeModal(); renderTracking();
     } catch (err) { alert('Error: ' + err.message); }
   };
