@@ -1,0 +1,1105 @@
+// ── State ──────────────────────────────────────────────────────────────────
+let members = [];
+let currentUser = null; // { id, name }
+let currentPage = 'dashboard';
+let billsFilter = 'all';
+let splitMode = 'equal';
+
+// ── API ────────────────────────────────────────────────────────────────────
+async function api(method, url, data) {
+  const token = localStorage.getItem('ghazal_token');
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+  if (data) opts.body = JSON.stringify(data);
+
+  const r = await fetch(url, opts);
+
+  if (r.status === 401) {
+    localStorage.removeItem('ghazal_token');
+    currentUser = null;
+    showLoginScreen();
+    throw new Error('Not authenticated');
+  }
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ error: r.statusText }));
+    throw new Error(err.error || r.statusText);
+  }
+  return r.json();
+}
+const GET = url => api('GET', url);
+const POST = (url, d) => api('POST', url, d);
+const PUT = (url, d) => api('PUT', url, d);
+const DEL = url => api('DELETE', url);
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const fmt = a => '₹' + Math.abs(a).toFixed(2);
+const today = () => new Date().toISOString().split('T')[0];
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s + 'T00:00:00');
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' });
+}
+const TYPE_LABELS = { grocery: '🛒 Grocery', wifi: '📶 WiFi', electricity: '⚡ Electricity', rent: '🏠 Rent', other: '📋 Other' };
+const typeLabel = t => TYPE_LABELS[t] || t;
+const loading = () => `<div class="flex items-center justify-center h-48"><div class="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full spin"></div></div>`;
+const errHtml = e => `<div class="p-6 text-center text-red-500"><p class="font-medium">Error</p><p class="text-sm mt-1">${e.message}</p><button onclick="renderPage()" class="mt-3 text-blue-500 text-sm">Retry</button></div>`;
+
+function userBadge() {
+  return `<div class="flex items-center gap-2">
+    <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm">${currentUser.name[0].toUpperCase()}</div>
+    <span class="text-sm text-gray-600 font-medium">${currentUser.name.split(' ')[0]}</span>
+  </div>`;
+}
+
+function meTag() {
+  return `<div class="flex items-center gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+    <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">${currentUser.name[0].toUpperCase()}</div>
+    <div>
+      <p class="font-semibold text-blue-800 text-sm">${currentUser.name}</p>
+      <p class="text-xs text-blue-400">You</p>
+    </div>
+  </div>`;
+}
+
+// ── Auth ───────────────────────────────────────────────────────────────────
+async function showLoginScreen() {
+  document.getElementById('login-screen').classList.add('visible');
+  document.getElementById('login-form').reset();
+  const err = document.getElementById('login-error');
+  if (err) { err.textContent = ''; err.classList.add('hidden'); }
+
+  try {
+    const ms = await fetch('/api/members').then(r => r.json());
+    const setupSection = document.getElementById('setup-section');
+    if (ms.length === 0) {
+      setupSection.classList.remove('hidden');
+    } else {
+      setupSection.classList.add('hidden');
+    }
+  } catch (_) {}
+}
+
+function hideLoginScreen() {
+  document.getElementById('login-screen').classList.remove('visible');
+}
+
+function togglePwd() {
+  const inp = document.getElementById('pwd-input');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+document.getElementById('login-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+
+  btn.textContent = 'Signing in…';
+  btn.disabled = true;
+  errEl.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: fd.get('username').trim(), password: fd.get('password') })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+
+    localStorage.setItem('ghazal_token', data.token);
+    currentUser = data.member;
+    members = await fetch('/api/members').then(r => r.json());
+    hideLoginScreen();
+    navigate('dashboard');
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+    btn.textContent = 'Sign In';
+    btn.disabled = false;
+  }
+};
+
+// First-time setup: add member from login screen (no auth needed)
+async function setupAddMember(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const name = fd.get('name').trim();
+  if (!name) return;
+  const btn = e.target.querySelector('button');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    await fetch('/api/members', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    e.target.reset();
+    // Refresh the setup list
+    const existing = document.getElementById('setup-members-list');
+    const ms = await fetch('/api/members').then(r => r.json());
+    if (existing) existing.innerHTML = ms.map(m => `<div class="flex items-center gap-2 py-1"><div class="w-6 h-6 rounded-full bg-blue-200 text-blue-700 flex items-center justify-center font-bold text-xs">${m.name[0].toUpperCase()}</div><span class="text-sm text-gray-700">${m.name}</span><span class="text-xs text-gray-400 ml-auto font-mono">${m.name.toLowerCase().replace(/\s+/g,'')}</span></div>`).join('');
+    const hint = document.getElementById('setup-login-hint');
+    if (ms.length > 0 && hint) hint.classList.remove('hidden');
+  } catch (err) { alert('Error: ' + err.message); }
+  btn.disabled = false; btn.textContent = 'Add Person';
+}
+
+async function logout() {
+  if (!confirm('Log out?')) return;
+  try { await POST('/api/auth/logout', {}); } catch (_) {}
+  localStorage.removeItem('ghazal_token');
+  currentUser = null;
+  members = [];
+  showLoginScreen();
+}
+
+function showChangePasswordModal() {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-xl font-bold text-gray-800">Change Password</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <form id="pwd-form" class="space-y-4" novalidate>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Current Password</label>
+          <input name="current_password" type="password" required autofocus placeholder="Current password"
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">New Password</label>
+          <input name="new_password" type="password" required minlength="4" placeholder="Min 4 characters"
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Confirm New Password</label>
+          <input name="confirm_password" type="password" required placeholder="Repeat new password"
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Update Password</button>
+      </form>
+    </div>
+  `);
+  document.getElementById('pwd-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const newPwd = fd.get('new_password');
+    if (newPwd !== fd.get('confirm_password')) { alert('Passwords do not match.'); return; }
+    if (newPwd.length < 4) { alert('Password must be at least 4 characters.'); return; }
+    try {
+      await PUT('/api/auth/password', { current_password: fd.get('current_password'), new_password: newPwd });
+      closeModal();
+      alert('Password updated successfully!');
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+function navigate(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  renderPage();
+}
+function renderPage() {
+  ({ dashboard: renderDashboard, bills: renderBills, tracking: renderTracking, settle: renderSettle, members: renderMembers })[currentPage]();
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────
+function openModal(html) {
+  document.getElementById('modal-box').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+});
+
+// ── Dashboard ──────────────────────────────────────────────────────────────
+async function renderDashboard() {
+  const app = document.getElementById('app');
+  app.innerHTML = loading();
+  try {
+    const [settle, trackingItems, bills] = await Promise.all([
+      GET('/api/settlements/summary'),
+      GET('/api/tracking'),
+      GET('/api/bills')
+    ]);
+
+    const myBalance = settle.memberBalances.find(m => m.id === currentUser.id);
+
+    app.innerHTML = `
+    <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-800">Ghazal</h1>
+          <p class="text-sm text-gray-400">South 11</p>
+        </div>
+        ${userBadge()}
+      </div>
+
+      ${myBalance ? `
+      <div class="rounded-2xl p-4 text-white shadow-sm ${myBalance.balance > 0.01 ? 'bg-gradient-to-r from-green-500 to-emerald-600' : myBalance.balance < -0.01 ? 'bg-gradient-to-r from-red-500 to-rose-600' : 'bg-gradient-to-r from-gray-400 to-gray-500'}">
+        <p class="text-sm opacity-80">${myBalance.balance > 0.01 ? 'You are owed' : myBalance.balance < -0.01 ? 'You owe' : 'You are'}</p>
+        <p class="text-4xl font-black mt-0.5">${myBalance.balance === 0 ? 'All settled' : fmt(myBalance.balance)}</p>
+        ${myBalance.balance !== 0 ? `<p class="text-sm opacity-70 mt-0.5">${myBalance.balance > 0 ? 'others owe you' : 'total to pay'}</p>` : ''}
+      </div>
+      ` : ''}
+
+      ${trackingItems.length > 0 ? `
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2 flex items-center justify-between">
+          <h2 class="font-semibold text-gray-700">Stock</h2>
+          <button onclick="navigate('tracking')" class="text-blue-500 text-sm">Manage →</button>
+        </div>
+        <div class="flex gap-3 overflow-x-auto px-4 pb-4">
+          ${trackingItems.map(item => `
+            <button onclick="navigate('tracking')" class="flex-shrink-0 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center min-w-[80px]">
+              <p class="text-3xl font-black ${item.current_stock <= 5 ? 'text-red-500' : 'text-amber-600'} leading-none">${item.current_stock}</p>
+              <p class="text-xs font-semibold text-amber-700 mt-1 truncate max-w-[72px]">${item.name}</p>
+              <p class="text-xs text-amber-400">${item.unit}</p>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      ${settle.transactions.length > 0 ? `
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2 flex items-center justify-between">
+          <h2 class="font-semibold text-gray-700">Balances</h2>
+          <button onclick="navigate('settle')" class="text-blue-500 text-sm">Details →</button>
+        </div>
+        ${settle.transactions.map(t => `
+          <div class="flex items-center justify-between px-4 py-2.5 border-t border-gray-50">
+            <p class="text-sm"><span class="font-semibold ${t.from_id === currentUser.id ? 'text-red-500' : 'text-gray-700'}">${t.from_id === currentUser.id ? 'You' : t.from}</span><span class="text-gray-400 mx-1">→</span><span class="font-semibold ${t.to_id === currentUser.id ? 'text-green-600' : 'text-gray-700'}">${t.to_id === currentUser.id ? 'You' : t.to}</span></p>
+            <span class="font-bold text-gray-800">${fmt(t.amount)}</span>
+          </div>
+        `).join('')}
+      </div>
+      ` : settle.memberBalances.length > 1 ? `
+      <div class="bg-green-50 border border-green-100 rounded-2xl p-4 text-center">
+        <p class="text-2xl">✅</p><p class="text-green-700 font-semibold mt-1">All settled up!</p>
+      </div>` : ''}
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2 flex items-center justify-between">
+          <h2 class="font-semibold text-gray-700">Recent Bills</h2>
+          <button onclick="navigate('bills')" class="text-blue-500 text-sm">See all →</button>
+        </div>
+        ${bills.slice(0, 5).length === 0
+          ? `<p class="px-4 pb-4 text-sm text-gray-400">No bills yet.</p>`
+          : bills.slice(0, 5).map(b => `
+            <div class="flex items-center justify-between px-4 py-3 border-t border-gray-50">
+              <div class="flex-1 min-w-0 mr-3">
+                <p class="font-medium text-gray-800 truncate">${b.description || typeLabel(b.type)}</p>
+                <p class="text-xs text-gray-400 mt-0.5">${typeLabel(b.type)} · ${b.payer_name} · ${fmtDate(b.date)}</p>
+              </div>
+              <span class="font-bold text-gray-700 flex-shrink-0">${fmt(b.total_amount)}</span>
+            </div>
+          `).join('')}
+      </div>
+    </div>`;
+  } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+}
+
+// ── Bills ──────────────────────────────────────────────────────────────────
+async function renderBills() {
+  const app = document.getElementById('app');
+  app.innerHTML = loading();
+  try {
+    const url = billsFilter !== 'all' ? `/api/bills?type=${billsFilter}` : '/api/bills';
+    const bills = await GET(url);
+    const filters = ['all', 'grocery', 'wifi', 'electricity', 'rent', 'other'];
+    const fLabels = { all: 'All', grocery: '🛒', wifi: '📶', electricity: '⚡', rent: '🏠', other: '📋' };
+
+    app.innerHTML = `
+    <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
+      <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold text-gray-800">Bills</h1>
+        <button onclick="showAddBillModal()" class="bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm">+ Add Bill</button>
+      </div>
+
+      <div class="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+        ${filters.map(f => `
+          <button onclick="setBillFilter('${f}')"
+            class="flex-shrink-0 px-3 py-1.5 rounded-full text-sm font-medium border transition-colors
+              ${billsFilter === f ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}">
+            ${fLabels[f]} ${f.charAt(0).toUpperCase() + f.slice(1)}
+          </button>
+        `).join('')}
+      </div>
+
+      <div class="space-y-3">
+        ${bills.length === 0
+          ? `<div class="text-center py-16"><p class="text-4xl mb-3">🧾</p><p class="text-gray-500 font-medium">No bills here</p></div>`
+          : bills.map(b => `
+            <div class="bg-white rounded-2xl shadow-sm border ${b.paid_by === currentUser.id ? 'border-blue-100' : 'border-gray-100'} p-4">
+              <div class="flex items-start gap-3">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">${typeLabel(b.type)}</span>
+                    ${b.paid_by === currentUser.id ? '<span class="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-medium">You paid</span>' : ''}
+                    <span class="text-xs text-gray-400">${fmtDate(b.date)}</span>
+                  </div>
+                  ${b.description ? `<p class="font-semibold text-gray-800 mt-1">${b.description}</p>` : ''}
+                  <p class="text-xs text-gray-400 mt-0.5">Paid by <span class="font-medium text-gray-600">${b.payer_name}</span></p>
+                  ${b.splits.length > 0 ? `<p class="text-xs text-gray-400 mt-0.5">Split: ${b.splits.map(s => s.member_name).join(', ')}</p>` : ''}
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <p class="text-xl font-black text-gray-800">${fmt(b.total_amount)}</p>
+                  ${b.splits.length > 0 ? `<p class="text-xs text-gray-400">${fmt(b.splits[0]?.amount || 0)}/ea</p>` : ''}
+                </div>
+              </div>
+              ${b.items.length > 0 ? `
+                <div class="mt-3 pt-3 border-t border-gray-100">
+                  ${b.items.slice(0, 4).map(i => `
+                    <div class="flex justify-between text-xs text-gray-600 py-0.5">
+                      <span>${i.name}${i.quantity ? ` ×${i.quantity}${i.unit || ''}` : ''}</span>
+                      <span class="font-medium">${fmt(i.amount)}</span>
+                    </div>
+                  `).join('')}
+                  ${b.items.length > 4 ? `<p class="text-xs text-blue-400 mt-1">+${b.items.length - 4} more</p>` : ''}
+                </div>
+              ` : ''}
+              ${b.paid_by === currentUser.id ? `
+              <div class="flex gap-2 mt-3 pt-3 border-t border-gray-100">
+                <button onclick="deleteBill(${b.id})" class="flex-1 py-1.5 text-xs text-red-500 border border-red-200 rounded-lg font-medium">Delete</button>
+              </div>` : ''}
+            </div>
+          `).join('')}
+      </div>
+    </div>`;
+  } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+}
+
+function setBillFilter(f) { billsFilter = f; renderBills(); }
+
+async function deleteBill(id) {
+  if (!confirm('Delete this bill? This will affect all balances.')) return;
+  try { await DEL(`/api/bills/${id}`); renderBills(); }
+  catch (e) { alert(e.message); }
+}
+
+// ── Add Bill Modal ─────────────────────────────────────────────────────────
+function showAddBillModal() {
+  if (members.length === 0) { alert('Please add members first.'); navigate('members'); return; }
+  splitMode = 'equal';
+
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-xl font-bold text-gray-800">Add Bill</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <form id="bill-form" class="space-y-4" novalidate>
+
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Type</label>
+          <select id="bill-type" name="type" onchange="onTypeChange()"
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="grocery">🛒 Grocery</option>
+            <option value="wifi">📶 WiFi</option>
+            <option value="electricity">⚡ Electricity</option>
+            <option value="rent">🏠 Rent</option>
+            <option value="other">📋 Other</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Description <span class="font-normal text-gray-400">(optional)</span></label>
+          <input name="description" type="text" placeholder="e.g. Monthly WiFi bill"
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Total (₹)</label>
+            <input name="total_amount" type="number" step="0.01" min="0.01" placeholder="0.00" required
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Date</label>
+            <input name="date" type="date" value="${today()}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Paid By</label>
+          ${meTag()}
+        </div>
+
+        <div id="items-section">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-sm font-semibold text-gray-700">Items <span class="font-normal text-gray-400">(optional)</span></label>
+            <button type="button" onclick="addItemRow()" class="text-blue-500 text-sm font-medium">+ Add item</button>
+          </div>
+          <div id="items-list" class="space-y-2"></div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-2">Split</label>
+          <div class="flex rounded-xl border border-gray-200 p-1 gap-1 mb-3">
+            <button type="button" id="btn-equal" onclick="setSplitMode('equal')"
+              class="flex-1 py-2 rounded-lg text-sm font-semibold bg-blue-500 text-white">Equal</button>
+            <button type="button" id="btn-custom" onclick="setSplitMode('custom')"
+              class="flex-1 py-2 rounded-lg text-sm font-semibold text-gray-500">Custom</button>
+          </div>
+
+          <div id="section-equal">
+            <div class="flex items-center justify-between mb-2">
+              <div id="per-person-amount" class="text-xs text-blue-600 font-medium"></div>
+              <div class="flex gap-3">
+                <button type="button" onclick="toggleAllSplit(true)" class="text-blue-500 text-xs font-medium">All</button>
+                <button type="button" onclick="toggleAllSplit(false)" class="text-gray-400 text-xs">None</button>
+              </div>
+            </div>
+            <div class="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+              ${members.map(m => `
+                <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-blue-50">
+                  <input type="checkbox" name="split_members" value="${m.id}" checked onchange="updatePerPerson()"
+                    class="w-5 h-5 rounded accent-blue-500">
+                  <div class="w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                    ${m.name[0].toUpperCase()}
+                  </div>
+                  <span class="text-gray-700 font-medium">${m.name}</span>
+                  ${m.id === currentUser.id ? '<span class="text-xs text-blue-400 ml-auto">you</span>' : ''}
+                </label>
+              `).join('')}
+            </div>
+          </div>
+
+          <div id="section-custom" style="display:none">
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-xs text-gray-500">Enter each person's share</p>
+              <div id="custom-total-indicator" class="text-xs font-medium"></div>
+            </div>
+            <div class="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+              ${members.map(m => `
+                <div class="flex items-center gap-3 px-4 py-2.5">
+                  <div class="w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                    ${m.name[0].toUpperCase()}
+                  </div>
+                  <span class="flex-1 text-gray-700 font-medium text-sm">${m.name}${m.id === currentUser.id ? ' <span class="text-blue-400 text-xs">(you)</span>' : ''}</span>
+                  <span class="text-gray-400 text-sm">₹</span>
+                  <input type="number" class="custom-split-input w-24 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-500 bg-gray-50"
+                    data-member-id="${m.id}" placeholder="0.00" step="0.01" min="0" oninput="updateCustomTotal()">
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold shadow-sm">Save Bill</button>
+      </form>
+    </div>
+  `);
+
+  document.getElementById('bill-form').onsubmit = submitBill;
+  document.querySelector('[name="total_amount"]').addEventListener('input', () => splitMode === 'equal' ? updatePerPerson() : updateCustomTotal());
+  onTypeChange();
+  updatePerPerson();
+}
+
+function setSplitMode(mode) {
+  splitMode = mode;
+  document.getElementById('section-equal').style.display = mode === 'equal' ? 'block' : 'none';
+  document.getElementById('section-custom').style.display = mode === 'custom' ? 'block' : 'none';
+  document.getElementById('btn-equal').className = `flex-1 py-2 rounded-lg text-sm font-semibold ${mode === 'equal' ? 'bg-blue-500 text-white' : 'text-gray-500'}`;
+  document.getElementById('btn-custom').className = `flex-1 py-2 rounded-lg text-sm font-semibold ${mode === 'custom' ? 'bg-blue-500 text-white' : 'text-gray-500'}`;
+}
+
+function onTypeChange() {
+  const type = document.getElementById('bill-type')?.value;
+  const el = document.getElementById('items-section');
+  if (el) el.style.display = type === 'grocery' ? 'block' : 'none';
+}
+
+function addItemRow() {
+  const list = document.getElementById('items-list');
+  const div = document.createElement('div');
+  div.className = 'flex gap-2 items-center';
+  div.innerHTML = `
+    <input type="text" placeholder="Item name" class="flex-1 border border-gray-200 rounded-lg px-2.5 py-2 text-sm bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500 item-name">
+    <input type="number" placeholder="₹" step="0.01" min="0" class="w-20 border border-gray-200 rounded-lg px-2.5 py-2 text-sm bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500 item-amount">
+    <button type="button" onclick="this.parentElement.remove()" class="text-red-400 text-xl leading-none flex-shrink-0">×</button>
+  `;
+  list.appendChild(div);
+}
+
+function toggleAllSplit(val) {
+  document.querySelectorAll('[name="split_members"]').forEach(cb => cb.checked = val);
+  updatePerPerson();
+}
+
+function updatePerPerson() {
+  const total = parseFloat(document.querySelector('[name="total_amount"]')?.value) || 0;
+  const count = document.querySelectorAll('[name="split_members"]:checked').length;
+  const el = document.getElementById('per-person-amount');
+  if (el) el.textContent = (total > 0 && count > 0) ? `₹${(total / count).toFixed(2)}/person · ${count} people` : '';
+}
+
+function updateCustomTotal() {
+  const sum = [...document.querySelectorAll('.custom-split-input')].reduce((a, inp) => a + (parseFloat(inp.value) || 0), 0);
+  const total = parseFloat(document.querySelector('[name="total_amount"]')?.value) || 0;
+  const el = document.getElementById('custom-total-indicator');
+  if (!el || total === 0) return;
+  const diff = total - sum;
+  if (Math.abs(diff) < 0.01) { el.className = 'text-xs font-medium text-green-600'; el.textContent = '✓ Balanced'; }
+  else { el.className = `text-xs font-medium ${diff > 0 ? 'text-orange-500' : 'text-red-500'}`; el.textContent = diff > 0 ? `₹${diff.toFixed(2)} remaining` : `₹${Math.abs(diff).toFixed(2)} over`; }
+}
+
+async function submitBill(e) {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData(form);
+  const total = parseFloat(fd.get('total_amount'));
+  if (!total || total <= 0) { alert('Enter a valid amount.'); return; }
+
+  let splits;
+  if (splitMode === 'equal') {
+    const selected = [...form.querySelectorAll('[name="split_members"]:checked')].map(cb => parseInt(cb.value));
+    if (selected.length === 0) { alert('Select at least one person.'); return; }
+    const share = Math.round((total / selected.length) * 100) / 100;
+    splits = selected.map(id => ({ member_id: id, amount: share }));
+  } else {
+    splits = [...document.querySelectorAll('.custom-split-input')]
+      .filter(inp => parseFloat(inp.value) > 0)
+      .map(inp => ({ member_id: parseInt(inp.dataset.memberId), amount: parseFloat(inp.value) }));
+    if (splits.length === 0) { alert('Enter at least one custom amount.'); return; }
+    const sum = splits.reduce((a, s) => a + s.amount, 0);
+    if (Math.abs(sum - total) > 0.01) { alert(`Custom amounts total ₹${sum.toFixed(2)} but bill is ₹${total.toFixed(2)}.`); return; }
+  }
+
+  const items = [...(document.querySelectorAll('#items-list > div') || [])].map(row => ({
+    name: row.querySelector('.item-name').value.trim(),
+    amount: parseFloat(row.querySelector('.item-amount').value) || 0
+  })).filter(i => i.name);
+
+  try {
+    await POST('/api/bills', { type: fd.get('type'), description: fd.get('description')?.trim() || '', total_amount: total, date: fd.get('date'), splits, items });
+    closeModal();
+    renderBills();
+  } catch (err) { alert('Error: ' + err.message); }
+}
+
+// ── Tracking ───────────────────────────────────────────────────────────────
+async function renderTracking() {
+  const app = document.getElementById('app');
+  app.innerHTML = loading();
+  try {
+    const items = await GET('/api/tracking');
+    app.innerHTML = `
+    <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
+      <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold text-gray-800">Tracking</h1>
+        <button onclick="showAddItemModal()" class="bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm">+ New Item</button>
+      </div>
+      ${items.length === 0
+        ? `<div class="text-center py-16"><p class="text-5xl mb-4">📦</p><p class="text-gray-600 font-semibold text-lg">Nothing tracked yet</p><p class="text-gray-400 text-sm mt-1 mb-6">Add items like eggs, milk, bread</p><button onclick="showAddItemModal()" class="bg-blue-500 text-white px-6 py-3 rounded-xl font-semibold">Add First Item</button></div>`
+        : items.map(item => `
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="p-4">
+              <div class="flex items-start justify-between">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="font-bold text-gray-800 text-lg">${item.name}</h3>
+                    <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">${item.unit}</span>
+                    <span class="text-xs text-gray-400">₹${item.price_per_unit}/${item.unit.replace(/s$/, '')}</span>
+                  </div>
+                  <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-4xl font-black ${item.current_stock <= 5 ? 'text-red-500' : 'text-amber-600'}">${item.current_stock}</span>
+                    <span class="text-gray-400 text-sm">remaining</span>
+                    ${item.current_stock <= 5 ? '<span class="text-xs text-red-500 font-semibold ml-1">⚠ Low!</span>' : ''}
+                  </div>
+                </div>
+                <button onclick="deleteTrackedItem(${item.id}, '${item.name.replace(/'/g, "\\'")}')" class="text-gray-300 text-sm ml-2 px-1">✕</button>
+              </div>
+              <div class="flex gap-2 mt-3">
+                <button onclick="showAddStockModal(${item.id}, '${item.name.replace(/'/g, "\\'")}', ${item.price_per_unit}, '${item.unit}')"
+                  class="flex-1 bg-green-500 text-white py-2.5 rounded-xl text-sm font-semibold">+ Add Stock</button>
+                <button onclick="showUseStockModal(${item.id}, '${item.name.replace(/'/g, "\\'")}', '${item.unit}', ${item.current_stock})"
+                  class="flex-1 bg-orange-500 text-white py-2.5 rounded-xl text-sm font-semibold">− Record Use</button>
+              </div>
+            </div>
+            ${item.recent_log.length > 0 ? `
+            <div class="border-t border-gray-100">
+              ${item.recent_log.slice(0, 4).map(l => `
+                <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 last:border-0">
+                  <div class="flex items-center gap-3">
+                    <span class="font-bold ${l.action === 'add' ? 'text-green-500' : 'text-orange-500'}">${l.action === 'add' ? '+' : '−'}${l.quantity}</span>
+                    <div>
+                      <p class="text-xs font-medium text-gray-700">
+                        ${l.action === 'add'
+                          ? `Bought by ${l.paid_by_name || '—'}${l.price_per_unit ? ` · ₹${(l.quantity * l.price_per_unit).toFixed(2)}` : ''}`
+                          : `Used by ${l.member_name || '—'}`}
+                      </p>
+                      ${l.notes ? `<p class="text-xs text-gray-400">${l.notes}</p>` : ''}
+                    </div>
+                  </div>
+                  <span class="text-xs text-gray-400">${fmtDate(l.date)}</span>
+                </div>
+              `).join('')}
+            </div>` : ''}
+          </div>
+        `).join('')}
+    </div>`;
+  } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+}
+
+function showAddItemModal() {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-xl font-bold text-gray-800">New Tracked Item</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <form id="item-form" class="space-y-4" novalidate>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Item Name</label>
+          <input name="name" type="text" placeholder="e.g. Eggs, Milk, Bread" required autofocus
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Unit</label>
+            <input name="unit" type="text" placeholder="pieces, liters…" value="pieces"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Price / unit (₹)</label>
+            <input name="price_per_unit" type="number" step="0.01" min="0" placeholder="0.00"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Add Item</button>
+      </form>
+    </div>
+  `);
+  document.getElementById('item-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = fd.get('name').trim();
+    if (!name) { alert('Name is required.'); return; }
+    try {
+      await POST('/api/tracking/items', { name, unit: fd.get('unit')?.trim() || 'pieces', price_per_unit: parseFloat(fd.get('price_per_unit')) || 0 });
+      closeModal(); renderTracking();
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+function showAddStockModal(itemId, itemName, defaultPrice, unit) {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-xl font-bold text-gray-800">Add ${itemName} Stock</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <form id="stock-form" class="space-y-4 mt-4" novalidate>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Quantity (${unit})</label>
+            <input name="quantity" type="number" min="1" step="any" placeholder="How many?" required autofocus
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 text-xl font-bold focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Price / unit (₹)</label>
+            <input name="price_per_unit" type="number" step="0.01" min="0" value="${defaultPrice}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        <div id="stock-total" class="text-sm font-medium text-blue-600 -mt-2"></div>
+
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Paid By</label>
+          ${meTag()}
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-sm font-semibold text-gray-700">Split Among</label>
+            <div class="flex gap-3">
+              <button type="button" onclick="toggleAllTrackSplit(true)" class="text-blue-500 text-xs font-medium">All</button>
+              <button type="button" onclick="toggleAllTrackSplit(false)" class="text-gray-400 text-xs">None</button>
+            </div>
+          </div>
+          <div class="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+            ${members.map(m => `
+              <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-blue-50">
+                <input type="checkbox" name="split_members" value="${m.id}" checked class="w-5 h-5 rounded accent-blue-500">
+                <div class="w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs">${m.name[0].toUpperCase()}</div>
+                <span class="text-gray-700 font-medium">${m.name}</span>
+                ${m.id === currentUser.id ? '<span class="text-xs text-blue-400 ml-auto">you</span>' : ''}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Date</label>
+            <input name="date" type="date" value="${today()}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Notes</label>
+            <input name="notes" type="text" placeholder="e.g. D-Mart"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        <button type="submit" class="w-full bg-green-500 text-white py-3.5 rounded-xl font-semibold">Add to Stock</button>
+      </form>
+    </div>
+  `);
+
+  const updateTotal = () => {
+    const q = parseFloat(document.querySelector('[name="quantity"]')?.value) || 0;
+    const p = parseFloat(document.querySelector('[name="price_per_unit"]')?.value) || 0;
+    const el = document.getElementById('stock-total');
+    if (el) el.textContent = (q > 0 && p > 0) ? `Total cost: ₹${(q * p).toFixed(2)}` : '';
+  };
+  document.querySelector('[name="quantity"]').addEventListener('input', updateTotal);
+  document.querySelector('[name="price_per_unit"]').addEventListener('input', updateTotal);
+
+  document.getElementById('stock-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const qty = parseFloat(fd.get('quantity'));
+    if (!qty || qty <= 0) { alert('Enter a valid quantity.'); return; }
+    const splitMembers = [...ev.target.querySelectorAll('[name="split_members"]:checked')].map(cb => parseInt(cb.value));
+    if (splitMembers.length === 0) { alert('Select at least one person.'); return; }
+    try {
+      await POST('/api/tracking/log', { item_id: itemId, action: 'add', quantity: qty, split_members: splitMembers, price_per_unit: parseFloat(fd.get('price_per_unit')) || 0, notes: fd.get('notes') || null, date: fd.get('date') });
+      closeModal(); renderTracking();
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+function toggleAllTrackSplit(val) {
+  document.querySelectorAll('#stock-form [name="split_members"]').forEach(cb => cb.checked = val);
+}
+
+function showUseStockModal(itemId, itemName, unit, currentStock) {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-xl font-bold text-gray-800">Use ${itemName}</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <p class="text-sm text-gray-400 mb-4">Stock: ${currentStock} ${unit}</p>
+      <form id="use-form" class="space-y-4" novalidate>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Quantity (${unit})</label>
+          <input name="quantity" type="number" min="1" step="any" placeholder="How many?" required autofocus
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 text-xl font-bold focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Used By</label>
+          ${meTag()}
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Date</label>
+            <input name="date" type="date" value="${today()}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Notes</label>
+            <input name="notes" type="text" placeholder="e.g. Breakfast"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        <button type="submit" class="w-full bg-orange-500 text-white py-3.5 rounded-xl font-semibold">Record Usage</button>
+      </form>
+    </div>
+  `);
+  document.getElementById('use-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const qty = parseFloat(fd.get('quantity'));
+    if (!qty || qty <= 0) { alert('Enter a valid quantity.'); return; }
+    try {
+      await POST('/api/tracking/log', { item_id: itemId, action: 'use', quantity: qty, notes: fd.get('notes') || null, date: fd.get('date') });
+      closeModal(); renderTracking();
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+async function deleteTrackedItem(id, name) {
+  if (!confirm(`Delete "${name}" and all its history?`)) return;
+  try { await DEL(`/api/tracking/items/${id}`); renderTracking(); }
+  catch (err) { alert('Error: ' + err.message); }
+}
+
+// ── Settle ─────────────────────────────────────────────────────────────────
+async function renderSettle() {
+  const app = document.getElementById('app');
+  app.innerHTML = loading();
+  try {
+    const [settle, history] = await Promise.all([GET('/api/settlements/summary'), GET('/api/settlements/history')]);
+
+    // My pending transactions (where I'm the debtor)
+    const myDebts = settle.transactions.filter(t => t.from_id === currentUser.id);
+
+    app.innerHTML = `
+    <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
+      <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold text-gray-800">Settle Up</h1>
+        <button onclick="showSettleModal()" class="bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm">I Paid Someone</button>
+      </div>
+
+      ${myDebts.length > 0 ? `
+      <div class="bg-red-50 border border-red-200 rounded-2xl overflow-hidden">
+        <div class="px-4 pt-3 pb-2"><h2 class="font-semibold text-red-700">You owe</h2></div>
+        ${myDebts.map(t => `
+          <div class="px-4 py-3 border-t border-red-100">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="font-semibold text-gray-800">Pay <span class="text-green-600">${t.to}</span></p>
+              </div>
+              <div class="text-right">
+                <p class="text-xl font-black text-red-600">${fmt(t.amount)}</p>
+                <button onclick="showSettleModal(${t.to_id}, ${t.amount})" class="text-xs text-blue-500 font-medium mt-0.5">Mark Paid →</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>` : ''}
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2"><h2 class="font-semibold text-gray-700">All Pending</h2></div>
+        ${settle.transactions.length === 0
+          ? `<div class="text-center py-8"><p class="text-3xl">✅</p><p class="text-green-600 font-semibold mt-2">All settled up!</p></div>`
+          : settle.transactions.map(t => `
+            <div class="px-4 py-3 border-t border-gray-50">
+              <div class="flex items-center justify-between">
+                <p class="font-medium text-gray-800">
+                  <span class="${t.from_id === currentUser.id ? 'text-red-500 font-bold' : 'text-gray-700'}">${t.from_id === currentUser.id ? 'You' : t.from}</span>
+                  <span class="text-gray-400 mx-2">→</span>
+                  <span class="${t.to_id === currentUser.id ? 'text-green-600 font-bold' : 'text-gray-700'}">${t.to_id === currentUser.id ? 'You' : t.to}</span>
+                </p>
+                <span class="font-bold text-gray-800">${fmt(t.amount)}</span>
+              </div>
+            </div>
+          `).join('')}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2"><h2 class="font-semibold text-gray-700">All Balances</h2></div>
+        ${settle.memberBalances.map(m => `
+          <div class="flex items-center justify-between px-4 py-3 border-t border-gray-50">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold ${m.id === currentUser.id ? 'bg-blue-500 text-white' : m.balance > 0.01 ? 'bg-green-100 text-green-600' : m.balance < -0.01 ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-400'}">
+                ${m.name[0].toUpperCase()}
+              </div>
+              <div>
+                <p class="font-medium text-gray-800">${m.name}${m.id === currentUser.id ? ' <span class="text-xs text-blue-400">(you)</span>' : ''}</p>
+                <p class="text-xs ${m.balance > 0.01 ? 'text-green-500' : m.balance < -0.01 ? 'text-red-400' : 'text-gray-400'}">
+                  ${m.balance > 0.01 ? 'gets back' : m.balance < -0.01 ? 'needs to pay' : 'settled'}
+                </p>
+              </div>
+            </div>
+            <span class="text-lg font-bold ${m.balance > 0.01 ? 'text-green-600' : m.balance < -0.01 ? 'text-red-500' : 'text-gray-400'}">
+              ${m.balance > 0.01 ? '+' : ''}${fmt(m.balance)}
+            </span>
+          </div>
+        `).join('')}
+      </div>
+
+      ${history.length > 0 ? `
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 pt-3 pb-2"><h2 class="font-semibold text-gray-700">Payment History</h2></div>
+        ${history.map(s => `
+          <div class="flex items-center justify-between px-4 py-3 border-t border-gray-50">
+            <div>
+              <p class="text-sm font-medium text-gray-700">
+                <span class="${s.from_member_id === currentUser.id ? 'text-blue-600 font-bold' : ''}">${s.from_member_id === currentUser.id ? 'You' : s.from_name}</span>
+                <span class="text-gray-400 mx-1">→</span>
+                <span class="${s.to_member_id === currentUser.id ? 'text-blue-600 font-bold' : ''}">${s.to_member_id === currentUser.id ? 'You' : s.to_name}</span>
+              </p>
+              ${s.notes ? `<p class="text-xs text-gray-400">${s.notes}</p>` : ''}
+            </div>
+            <div class="text-right">
+              <p class="font-bold text-gray-700">${fmt(s.amount)}</p>
+              <p class="text-xs text-gray-400">${fmtDate(s.date)}</p>
+            </div>
+          </div>
+        `).join('')}
+      </div>` : ''}
+    </div>`;
+  } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+}
+
+function showSettleModal(toId = null, amount = '') {
+  const otherMembers = members.filter(m => m.id !== currentUser.id);
+  if (otherMembers.length === 0) { alert('Need at least 2 members.'); return; }
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-xl font-bold text-gray-800">I Paid Someone</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <form id="settle-form" class="space-y-4" novalidate>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">From</label>
+          ${meTag()}
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Paid To</label>
+          <select name="to_member_id" class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            ${otherMembers.map(m => `<option value="${m.id}" ${m.id === toId ? 'selected' : ''}>${m.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Amount (₹)</label>
+            <input name="amount" type="number" step="0.01" min="0.01" value="${amount}" required
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Date</label>
+            <input name="date" type="date" value="${today()}"
+              class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Notes <span class="font-normal text-gray-400">(optional)</span></label>
+          <input name="notes" type="text" placeholder="e.g. Cash, UPI"
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Record Payment</button>
+      </form>
+    </div>
+  `);
+  document.getElementById('settle-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const amount = parseFloat(fd.get('amount'));
+    if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
+    try {
+      await POST('/api/settlements', { to_member_id: parseInt(fd.get('to_member_id')), amount, date: fd.get('date'), notes: fd.get('notes') || null });
+      closeModal(); renderSettle();
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+// ── Members ────────────────────────────────────────────────────────────────
+const COLORS = ['bg-blue-100 text-blue-600','bg-purple-100 text-purple-600','bg-green-100 text-green-600','bg-pink-100 text-pink-600','bg-yellow-100 text-yellow-700','bg-indigo-100 text-indigo-600','bg-teal-100 text-teal-600','bg-red-100 text-red-500'];
+
+async function renderMembers() {
+  const app = document.getElementById('app');
+  try {
+    members = await GET('/api/members');
+    app.innerHTML = `
+    <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
+      <h1 class="text-2xl font-bold text-gray-800">People</h1>
+
+      <!-- My account card -->
+      <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-lg">
+              ${currentUser.name[0].toUpperCase()}
+            </div>
+            <div>
+              <p class="font-bold text-gray-800">${currentUser.name}</p>
+              <p class="text-xs text-blue-500 font-medium">Logged in</p>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2 items-end">
+            <button onclick="showChangePasswordModal()" class="text-xs text-blue-600 border border-blue-200 bg-white px-3 py-1.5 rounded-lg font-medium">Change Password</button>
+            <button onclick="logout()" class="text-xs text-red-500 border border-red-200 bg-white px-3 py-1.5 rounded-lg font-medium">Log Out</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add member -->
+      <button onclick="showAddMemberModal()" class="w-full bg-blue-500 text-white py-3 rounded-xl font-semibold shadow-sm">+ Add Person</button>
+
+      <!-- Members list -->
+      ${members.length === 0
+        ? `<div class="text-center py-12"><p class="text-4xl mb-3">👥</p><p class="text-gray-500">No members yet</p></div>`
+        : `<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-100">
+            ${members.map((m, i) => `
+              <div class="flex items-center justify-between px-4 py-3.5 ${m.id === currentUser.id ? 'bg-blue-50' : ''}">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-base ${m.id === currentUser.id ? 'bg-blue-500 text-white' : COLORS[i % COLORS.length]}">
+                    ${m.name[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p class="font-semibold text-gray-800">${m.name} ${m.id === currentUser.id ? '<span class="text-xs text-blue-400">(you)</span>' : ''}</p>
+                    <p class="text-xs text-gray-400">Username: <span class="font-mono">${m.name.toLowerCase().replace(/\s+/g, '')}</span></p>
+                  </div>
+                </div>
+                ${m.id !== currentUser.id ? `<button onclick="deleteMember(${m.id}, '${m.name.replace(/'/g, "\\'")}')" class="text-sm text-red-400 font-medium px-3 py-1.5 border border-red-200 rounded-lg">Remove</button>` : ''}
+              </div>
+            `).join('')}
+          </div>
+          <p class="text-center text-xs text-gray-400">${members.length} ${members.length === 1 ? 'person' : 'people'} · South 11</p>`
+      }
+    </div>`;
+  } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+}
+
+function showAddMemberModal() {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-xl font-bold text-gray-800">Add Person</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-sm text-amber-700">
+        <p class="font-semibold">Auto-login created:</p>
+        <p class="text-xs mt-0.5 font-mono">username: <em>name in lowercase</em></p>
+        <p class="text-xs font-mono">password: <em>name@123</em></p>
+      </div>
+      <form id="member-form" class="space-y-4" novalidate>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Name</label>
+          <input name="name" type="text" placeholder="Enter full name" required autofocus
+            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Add to Room</button>
+      </form>
+    </div>
+  `);
+  document.getElementById('member-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = new FormData(e.target).get('name').trim();
+    if (!name) { alert('Name is required.'); return; }
+    try {
+      await POST('/api/members', { name });
+      members = await GET('/api/members');
+      closeModal(); renderMembers();
+    } catch (err) { alert('Error: ' + err.message); }
+  };
+}
+
+async function deleteMember(id, name) {
+  if (!confirm(`Remove ${name}?\nThis will NOT delete their bills or splits.`)) return;
+  try { await DEL(`/api/members/${id}`); members = await GET('/api/members'); renderMembers(); }
+  catch (err) { alert('Error: ' + err.message); }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  const token = localStorage.getItem('ghazal_token');
+  if (!token) { showLoginScreen(); return; }
+
+  try {
+    const data = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!data.ok) { localStorage.removeItem('ghazal_token'); showLoginScreen(); return; }
+    const { member } = await data.json();
+    currentUser = member;
+    members = await GET('/api/members');
+    navigate('dashboard');
+  } catch (e) {
+    document.getElementById('app').innerHTML = `
+      <div class="flex flex-col items-center justify-center h-screen gap-4 p-8">
+        <p class="text-4xl">⚠️</p>
+        <p class="text-gray-700 font-semibold">Could not connect to server</p>
+        <button onclick="init()" class="bg-blue-500 text-white px-6 py-3 rounded-xl font-semibold">Retry</button>
+      </div>`;
+  }
+}
+
+init();
