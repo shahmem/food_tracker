@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Member, Bill, TrackedLog, Settlement } = require('../db/init');
+const { Member, Bill, TrackedItem, TrackedLog, Settlement } = require('../db/init');
 
 async function getBalances() {
   const members = await Member.find().sort('name');
@@ -19,17 +19,30 @@ async function getBalances() {
     }
   }
 
-  const tracked = await TrackedLog.find({ action: 'add', paid_by: { $ne: null } }).populate('item_id', 'price_per_unit');
-  for (const t of tracked) {
-    if (!t.split_members || t.split_members.length === 0) continue;
-    const price = t.price_per_unit != null ? t.price_per_unit : t.item_id?.price_per_unit ?? 0;
-    const share = (t.quantity * price) / t.split_members.length;
-    const paidBy = t.paid_by.toString();
-    for (const memberId of t.split_members) {
-      const mId = memberId.toString();
-      if (mId !== paidBy) {
-        balances[paidBy] = (balances[paidBy] || 0) + share;
-        balances[mId] = (balances[mId] || 0) - share;
+  // FIFO: for each item, consume add-batches in order when someone uses stock
+  const items = await TrackedItem.find();
+  for (const item of items) {
+    const logs = await TrackedLog.find({ item_id: item._id }).sort({ created_at: 1 });
+    const queue = []; // { paid_by, remaining, price }
+    for (const log of logs) {
+      if (log.action === 'add' && log.paid_by) {
+        const price = log.price_per_unit != null ? log.price_per_unit : item.price_per_unit;
+        queue.push({ paid_by: log.paid_by.toString(), remaining: log.quantity, price });
+      } else if (log.action === 'use' && log.member_id) {
+        let qty = log.quantity;
+        const user = log.member_id.toString();
+        while (qty > 0 && queue.length > 0) {
+          const batch = queue[0];
+          const consumed = Math.min(qty, batch.remaining);
+          if (batch.paid_by !== user && batch.price > 0) {
+            const cost = consumed * batch.price;
+            balances[batch.paid_by] = (balances[batch.paid_by] || 0) + cost;
+            balances[user] = (balances[user] || 0) - cost;
+          }
+          batch.remaining -= consumed;
+          qty -= consumed;
+          if (batch.remaining <= 0) queue.shift();
+        }
       }
     }
   }

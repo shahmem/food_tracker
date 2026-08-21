@@ -732,26 +732,6 @@ function showAddStockModal(itemId, itemName, defaultPrice, unit) {
           ${meTag()}
         </div>
 
-        <div>
-          <div class="flex items-center justify-between mb-2">
-            <label class="text-sm font-semibold text-gray-700">Split Among</label>
-            <div class="flex gap-3">
-              <button type="button" onclick="toggleAllTrackSplit(true)" class="text-blue-500 text-xs font-medium">All</button>
-              <button type="button" onclick="toggleAllTrackSplit(false)" class="text-gray-400 text-xs">None</button>
-            </div>
-          </div>
-          <div class="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
-            ${members.map(m => `
-              <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-blue-50">
-                <input type="checkbox" name="split_members" value="${m.id}" checked class="w-5 h-5 rounded accent-blue-500">
-                <div class="w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs">${m.name[0].toUpperCase()}</div>
-                <span class="text-gray-700 font-medium">${m.name}</span>
-                ${m.id === currentUser.id ? '<span class="text-xs text-blue-400 ml-auto">you</span>' : ''}
-              </label>
-            `).join('')}
-          </div>
-        </div>
-
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">Date</label>
@@ -783,18 +763,13 @@ function showAddStockModal(itemId, itemName, defaultPrice, unit) {
     const fd = new FormData(ev.target);
     const qty = parseFloat(fd.get('quantity'));
     if (!qty || qty <= 0) { alert('Enter a valid quantity.'); return; }
-    const splitMembers = [...ev.target.querySelectorAll('[name="split_members"]:checked')].map(cb => parseInt(cb.value));
-    if (splitMembers.length === 0) { alert('Select at least one person.'); return; }
     try {
-      await POST('/api/tracking/log', { item_id: itemId, action: 'add', quantity: qty, split_members: splitMembers, price_per_unit: parseFloat(fd.get('price_per_unit')) || 0, notes: fd.get('notes') || null, date: fd.get('date') });
+      await POST('/api/tracking/log', { item_id: itemId, action: 'add', quantity: qty, price_per_unit: parseFloat(fd.get('price_per_unit')) || 0, notes: fd.get('notes') || null, date: fd.get('date') });
       closeModal(); renderTracking();
     } catch (err) { alert('Error: ' + err.message); }
   };
 }
 
-function toggleAllTrackSplit(val) {
-  document.querySelectorAll('#stock-form [name="split_members"]').forEach(cb => cb.checked = val);
-}
 
 function showUseStockModal(itemId, itemName, unit, currentStock) {
   openModal(`

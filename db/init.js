@@ -76,6 +76,11 @@ mongoose.connect(MONGO_URI)
       await Auth.create({ username: 'admin', password: hashPwd('admin123'), isAdmin: true });
       console.log('Admin account created (admin / admin123)');
     }
+    const eggs = await TrackedItem.findOne({ name: 'Eggs' });
+    if (!eggs) {
+      await TrackedItem.create({ name: 'Eggs', unit: 'pieces', price_per_unit: 0 });
+      console.log('Default item "Eggs" created');
+    }
   })
   .catch(e => { console.error('MongoDB error:', e.message); process.exit(1); });
 
