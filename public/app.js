@@ -72,7 +72,6 @@ function showMemberPicker() {
 
 function selectMember(id, name) {
   currentUser = { id, name };
-  localStorage.setItem('ghazal_user', JSON.stringify(currentUser));
   renderPage();
 }
 
@@ -1130,13 +1129,8 @@ async function init() {
 
   try {
     members = await fetch('/api/members').then(r => r.json());
-    const saved = localStorage.getItem('ghazal_user');
-    if (saved) {
-      const u = JSON.parse(saved);
-      if (members.find(m => (m._id || m.id) === u.id)) currentUser = u;
-    }
     navigate('dashboard');
-    if (!currentUser) showMemberPicker();
+    showMemberPicker();
   } catch (e) {
     document.getElementById('app').innerHTML = `
       <div class="flex flex-col items-center justify-center h-screen gap-4 p-8">
