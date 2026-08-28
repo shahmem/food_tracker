@@ -53,46 +53,27 @@ function meTag() {
 
 // ── Member picker ──────────────────────────────────────────────────────────
 function showMemberPicker() {
-  document.getElementById('login-screen').classList.add('visible');
-  document.querySelector('nav').style.display = 'none';
-  renderMemberPicker();
-}
-
-function hideMemberPicker() {
-  document.getElementById('login-screen').classList.remove('visible');
-  document.querySelector('nav').style.display = '';
-}
-
-async function renderMemberPicker() {
-  const screen = document.getElementById('login-screen');
-  const memberList = members.length > 0 ? members : await fetch('/api/members').then(r => r.json());
-  members = memberList;
-
-  screen.innerHTML = `
-    <div class="w-full max-w-sm">
-      <div class="text-center mb-8">
-        <h1 class="text-5xl font-black text-white tracking-tight">Ghazal</h1>
-        <p class="text-blue-200 mt-2 text-lg font-medium">South 11</p>
+  openModal(`
+    <div>
+      <div class="mb-5">
+        <h2 class="text-xl font-bold text-gray-800">Who are you?</h2>
       </div>
-      <div class="bg-white rounded-3xl p-6 shadow-2xl">
-        <p class="text-center text-gray-500 text-sm font-medium mb-4">Who are you?</p>
-        <div class="space-y-2">
-          ${memberList.map(m => `
-            <button onclick="selectMember('${m._id || m.id}','${m.name.replace(/'/g, "\\'")}')"
-              class="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border border-gray-100 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left">
-              <div class="w-9 h-9 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">${m.name[0].toUpperCase()}</div>
-              <span class="font-semibold text-gray-800">${m.name}</span>
-            </button>`).join('')}
-        </div>
+      <div class="space-y-2">
+        ${members.map(m => `
+          <button onclick="selectMember('${m._id || m.id}','${m.name.replace(/'/g, "\\'")}'); closeModal();"
+            class="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border ${currentUser && (m._id || m.id) === currentUser.id ? 'border-blue-300 bg-blue-50' : 'border-gray-100'} active:bg-blue-50 text-left">
+            <div class="w-9 h-9 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">${m.name[0].toUpperCase()}</div>
+            <span class="font-semibold text-gray-800">${m.name}</span>
+            ${currentUser && (m._id || m.id) === currentUser.id ? '<span class="ml-auto text-blue-400 text-xs font-medium">current</span>' : ''}
+          </button>`).join('')}
       </div>
-    </div>`;
+    </div>`);
 }
 
 function selectMember(id, name) {
   currentUser = { id, name };
   localStorage.setItem('ghazal_user', JSON.stringify(currentUser));
-  hideMemberPicker();
-  navigate('dashboard');
+  renderPage();
 }
 
 function switchUser() {
@@ -988,13 +969,10 @@ async function init() {
     const saved = localStorage.getItem('ghazal_user');
     if (saved) {
       const u = JSON.parse(saved);
-      if (members.find(m => (m._id || m.id) === u.id)) {
-        currentUser = u;
-        navigate('dashboard');
-        return;
-      }
+      if (members.find(m => (m._id || m.id) === u.id)) currentUser = u;
     }
-    showMemberPicker();
+    navigate('dashboard');
+    if (!currentUser) showMemberPicker();
   } catch (e) {
     document.getElementById('app').innerHTML = `
       <div class="flex flex-col items-center justify-center h-screen gap-4 p-8">
