@@ -543,6 +543,7 @@ async function renderTracking() {
 
 let _historyLogs = [];
 let _historyFilter = 'all';
+let _historyUserFilter = 'all';
 let _historySort = 'newest';
 
 function fifoUseCost(logs, targetLog) {
@@ -593,6 +594,7 @@ async function showTrackingHistory() {
   try {
     _historyLogs = await GET('/api/tracking/history');
     _historyFilter = 'all';
+    _historyUserFilter = 'all';
     _historySort = 'newest';
     renderHistoryList();
   } catch (e) {
@@ -607,19 +609,33 @@ function renderHistoryList() {
   if (!controls || !list) return;
 
   const itemNames = ['all', ...new Set(_historyLogs.map(l => l.item_name).filter(Boolean))];
+  const userNames = ['all', ...new Set(_historyLogs.flatMap(l => [l.paid_by_name, l.member_name]).filter(Boolean))];
 
   controls.innerHTML = `
-    <select onchange="_historyFilter=this.value;renderHistoryList()"
-      class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
-      ${itemNames.map(n => `<option value="${n}" ${_historyFilter===n?'selected':''}>${n==='all'?'All items':n}</option>`).join('')}
-    </select>
-    <select onchange="_historySort=this.value;renderHistoryList()"
-      class="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
-      <option value="newest" ${_historySort==='newest'?'selected':''}>Newest first</option>
-      <option value="oldest" ${_historySort==='oldest'?'selected':''}>Oldest first</option>
-    </select>`;
+    <div class="flex gap-2 w-full flex-wrap">
+      <select onchange="_historyFilter=this.value;renderHistoryList()"
+        class="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
+        ${itemNames.map(n => `<option value="${n}" ${_historyFilter===n?'selected':''}>${n==='all'?'All items':n}</option>`).join('')}
+      </select>
+      <select onchange="_historyUserFilter=this.value;renderHistoryList()"
+        class="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
+        ${userNames.map(n => `<option value="${n}" ${_historyUserFilter===n?'selected':''}>${n==='all'?'All users':n}</option>`).join('')}
+      </select>
+      <select onchange="_historySort=this.value;renderHistoryList()"
+        class="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
+        <option value="newest" ${_historySort==='newest'?'selected':''}>Newest first</option>
+        <option value="oldest" ${_historySort==='oldest'?'selected':''}>Oldest first</option>
+      </select>
+    </div>`;
 
-  let logs = _historyLogs.filter(l => _historyFilter === 'all' || l.item_name === _historyFilter);
+  let logs = _historyLogs.filter(l => {
+    if (_historyFilter !== 'all' && l.item_name !== _historyFilter) return false;
+    if (_historyUserFilter !== 'all') {
+      const who = l.action === 'add' ? l.paid_by_name : l.member_name;
+      if (who !== _historyUserFilter) return false;
+    }
+    return true;
+  });
   if (_historySort === 'oldest') logs = [...logs].reverse();
 
   if (logs.length === 0) { list.innerHTML = `<p class="text-center text-gray-400 py-8">No entries found</p>`; return; }
