@@ -80,6 +80,24 @@ router.delete('/items/:id', async (req, res) => {
   }
 });
 
+router.get('/history', async (req, res) => {
+  try {
+    const logs = await TrackedLog.find()
+      .populate('item_id', 'name unit')
+      .populate('member_id', 'name')
+      .populate('paid_by', 'name')
+      .sort({ created_at: -1 })
+      .limit(200);
+    res.json(logs.map(l => ({
+      ...fmtLog(l),
+      item_name: l.item_id?.name,
+      item_unit: l.item_id?.unit
+    })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post('/log', async (req, res) => {
   try {
     const { item_id, action, quantity, split_members, price_per_unit, notes, date } = req.body;

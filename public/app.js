@@ -481,7 +481,10 @@ async function renderTracking() {
     <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold text-gray-800">Tracking</h1>
-        <button onclick="showAddItemModal()" class="bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm">+ New Item</button>
+        <div class="flex gap-2">
+          <button onclick="showTrackingHistory()" class="text-gray-500 border border-gray-200 px-3 py-2 rounded-xl text-sm font-medium">History</button>
+          <button onclick="showAddItemModal()" class="bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm">+ New Item</button>
+        </div>
       </div>
       ${items.length === 0
         ? `<div class="text-center py-16"><p class="text-5xl mb-4">📦</p><p class="text-gray-600 font-semibold text-lg">Nothing tracked yet</p><p class="text-gray-400 text-sm mt-1 mb-6">Add items like eggs, milk, bread</p><button onclick="showAddItemModal()" class="bg-blue-500 text-white px-6 py-3 rounded-xl font-semibold">Add First Item</button></div>`
@@ -536,6 +539,39 @@ async function renderTracking() {
         `).join('')}
     </div>`;
   } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+}
+
+async function showTrackingHistory() {
+  openModal(`<div><div class="flex items-center justify-between mb-4"><h2 class="text-xl font-bold text-gray-800">Stock History</h2><button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button></div><div id="history-list" class="space-y-1">${loading()}</div></div>`);
+  try {
+    const logs = await GET('/api/tracking/history');
+    const list = document.getElementById('history-list');
+    if (!list) return;
+    if (logs.length === 0) { list.innerHTML = `<p class="text-center text-gray-400 py-8">No history yet</p>`; return; }
+
+    let lastDate = null;
+    list.innerHTML = logs.map(l => {
+      const dateHeader = l.date !== lastDate ? `<p class="text-xs font-semibold text-gray-400 uppercase pt-3 pb-1">${fmtDate(l.date)}</p>` : '';
+      lastDate = l.date;
+      const isAdd = l.action === 'add';
+      const who = isAdd ? (l.paid_by_name || '—') : (l.member_name || '—');
+      const cost = isAdd && l.price_per_unit ? ` · ₹${(l.quantity * l.price_per_unit).toFixed(2)}` : '';
+      return `${dateHeader}
+        <div class="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${isAdd ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}">
+            ${isAdd ? '+' : '−'}
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold text-gray-800">${l.item_name || '—'} <span class="font-normal text-gray-500">${isAdd ? 'added by' : 'used by'} ${who}</span></p>
+            <p class="text-xs text-gray-400">${l.quantity} ${l.item_unit || ''}${cost}${l.notes ? ' · ' + l.notes : ''}</p>
+          </div>
+          <span class="text-xs text-gray-400 flex-shrink-0">${isAdd ? '+' : '−'}${l.quantity}</span>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    const list = document.getElementById('history-list');
+    if (list) list.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`;
+  }
 }
 
 function showAddItemModal() {
