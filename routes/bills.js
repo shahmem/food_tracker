@@ -41,11 +41,14 @@ router.post('/', async (req, res) => {
     if (!type || !total_amount) return res.status(400).json({ error: 'type and total_amount required' });
     if (!splits || splits.length === 0) return res.status(400).json({ error: 'At least one split required' });
 
+    const { paid_by: paid_by_id } = req.body;
+    if (!paid_by_id) return res.status(400).json({ error: 'paid_by required' });
+
     const bill = await Bill.create({
       type,
       description: description?.trim() || '',
       total_amount,
-      paid_by: req.user.member_id,
+      paid_by: paid_by_id,
       date: date || new Date().toISOString().split('T')[0],
       items: items || [],
       splits

@@ -112,8 +112,8 @@ router.get('/history', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const from_member_id = req.user.member_id;
-    const { to_member_id, amount, date, notes } = req.body;
+    const { from_member_id, to_member_id, amount, date, notes } = req.body;
+    if (!from_member_id) return res.status(400).json({ error: 'from_member_id required' });
     if (!to_member_id || !amount) return res.status(400).json({ error: 'to_member_id and amount required' });
     if (from_member_id.toString() === to_member_id.toString()) return res.status(400).json({ error: 'Cannot settle with yourself' });
 

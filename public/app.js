@@ -7,19 +7,9 @@ let splitMode = 'equal';
 
 // ── API ────────────────────────────────────────────────────────────────────
 async function api(method, url, data) {
-  const token = localStorage.getItem('ghazal_token');
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['Authorization'] = `Bearer ${token}`;
   if (data) opts.body = JSON.stringify(data);
-
   const r = await fetch(url, opts);
-
-  if (r.status === 401) {
-    localStorage.removeItem('ghazal_token');
-    currentUser = null;
-    showLoginScreen();
-    throw new Error('Not authenticated');
-  }
   if (!r.ok) {
     const err = await r.json().catch(() => ({ error: r.statusText }));
     throw new Error(err.error || r.statusText);
@@ -45,10 +35,10 @@ const loading = () => `<div class="flex items-center justify-center h-48"><div c
 const errHtml = e => `<div class="p-6 text-center text-red-500"><p class="font-medium">Error</p><p class="text-sm mt-1">${e.message}</p><button onclick="renderPage()" class="mt-3 text-blue-500 text-sm">Retry</button></div>`;
 
 function userBadge() {
-  return `<div class="flex items-center gap-2">
+  return `<button onclick="switchUser()" class="flex items-center gap-2 active:opacity-70">
     <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm">${currentUser.name[0].toUpperCase()}</div>
     <span class="text-sm text-gray-600 font-medium">${currentUser.name.split(' ')[0]}</span>
-  </div>`;
+  </button>`;
 }
 
 function meTag() {
@@ -61,116 +51,62 @@ function meTag() {
   </div>`;
 }
 
-// ── Auth ───────────────────────────────────────────────────────────────────
-function showLoginScreen() {
+// ── Member picker ──────────────────────────────────────────────────────────
+function showMemberPicker() {
   document.getElementById('login-screen').classList.add('visible');
-  document.getElementById('login-form').reset();
-  const err = document.getElementById('login-error');
-  if (err) { err.textContent = ''; err.classList.add('hidden'); }
+  document.querySelector('nav').style.display = 'none';
+  renderMemberPicker();
+}
+
+function hideMemberPicker() {
+  document.getElementById('login-screen').classList.remove('visible');
   document.querySelector('nav').style.display = '';
 }
 
-function hideLoginScreen() {
-  document.getElementById('login-screen').classList.remove('visible');
-}
+async function renderMemberPicker() {
+  const screen = document.getElementById('login-screen');
+  const memberList = members.length > 0 ? members : await fetch('/api/members').then(r => r.json());
+  members = memberList;
 
-function togglePwd() {
-  const inp = document.getElementById('pwd-input');
-  inp.type = inp.type === 'password' ? 'text' : 'password';
-}
-
-document.getElementById('login-form').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const btn = document.getElementById('login-btn');
-  const errEl = document.getElementById('login-error');
-
-  btn.textContent = 'Signing in…';
-  btn.disabled = true;
-  errEl.classList.add('hidden');
-
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: fd.get('username').trim(), password: fd.get('password') })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Login failed');
-
-    localStorage.setItem('ghazal_token', data.token);
-    currentUser = data.member;
-    members = await fetch('/api/members').then(r => r.json());
-    hideLoginScreen();
-    navigate(currentUser.isAdmin ? 'admin' : 'dashboard');
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.classList.remove('hidden');
-    btn.textContent = 'Sign In';
-    btn.disabled = false;
-  }
-};
-
-
-async function logout() {
-  if (!confirm('Log out?')) return;
-  try { await POST('/api/auth/logout', {}); } catch (_) {}
-  localStorage.removeItem('ghazal_token');
-  currentUser = null;
-  members = [];
-  showLoginScreen();
-}
-
-function showChangePasswordModal() {
-  openModal(`
-    <div>
-      <div class="flex items-center justify-between mb-5">
-        <h2 class="text-xl font-bold text-gray-800">Change Password</h2>
-        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+  screen.innerHTML = `
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <h1 class="text-5xl font-black text-white tracking-tight">Ghazal</h1>
+        <p class="text-blue-200 mt-2 text-lg font-medium">South 11</p>
       </div>
-      <form id="pwd-form" class="space-y-4" novalidate>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Current Password</label>
-          <input name="current_password" type="password" required autofocus placeholder="Current password"
-            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <div class="bg-white rounded-3xl p-6 shadow-2xl">
+        <p class="text-center text-gray-500 text-sm font-medium mb-4">Who are you?</p>
+        <div class="space-y-2">
+          ${memberList.map(m => `
+            <button onclick="selectMember('${m._id || m.id}','${m.name.replace(/'/g, "\\'")}')"
+              class="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border border-gray-100 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left">
+              <div class="w-9 h-9 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">${m.name[0].toUpperCase()}</div>
+              <span class="font-semibold text-gray-800">${m.name}</span>
+            </button>`).join('')}
         </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">New Password</label>
-          <input name="new_password" type="password" required minlength="4" placeholder="Min 4 characters"
-            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Confirm New Password</label>
-          <input name="confirm_password" type="password" required placeholder="Repeat new password"
-            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Update Password</button>
-      </form>
-    </div>
-  `);
-  document.getElementById('pwd-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const newPwd = fd.get('new_password');
-    if (newPwd !== fd.get('confirm_password')) { alert('Passwords do not match.'); return; }
-    if (newPwd.length < 4) { alert('Password must be at least 4 characters.'); return; }
-    try {
-      await PUT('/api/auth/password', { current_password: fd.get('current_password'), new_password: newPwd });
-      closeModal();
-      alert('Password updated successfully!');
-    } catch (err) { alert('Error: ' + err.message); }
-  };
+      </div>
+    </div>`;
+}
+
+function selectMember(id, name) {
+  currentUser = { id, name };
+  localStorage.setItem('ghazal_user', JSON.stringify(currentUser));
+  hideMemberPicker();
+  navigate('dashboard');
+}
+
+function switchUser() {
+  showMemberPicker();
 }
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navigate(page) {
   currentPage = page;
-  document.querySelector('nav').style.display = page === 'admin' ? 'none' : '';
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
   renderPage();
 }
 function renderPage() {
-  ({ dashboard: renderDashboard, bills: renderBills, tracking: renderTracking, settle: renderSettle, members: renderMembers, admin: renderAdmin })[currentPage]();
+  ({ dashboard: renderDashboard, bills: renderBills, tracking: renderTracking, settle: renderSettle, members: renderMembers })[currentPage]();
 }
 
 // ── Modal ──────────────────────────────────────────────────────────────────
@@ -548,7 +484,7 @@ async function submitBill(e) {
   })).filter(i => i.name);
 
   try {
-    await POST('/api/bills', { type: fd.get('type'), description: fd.get('description')?.trim() || '', total_amount: total, date: fd.get('date'), splits, items });
+    await POST('/api/bills', { type: fd.get('type'), description: fd.get('description')?.trim() || '', total_amount: total, date: fd.get('date'), splits, items, paid_by: currentUser.id });
     closeModal();
     renderBills();
   } catch (err) { alert('Error: ' + err.message); }
@@ -764,7 +700,7 @@ function showAddStockModal(itemId, itemName, defaultPrice, unit) {
     const qty = parseFloat(fd.get('quantity'));
     if (!qty || qty <= 0) { alert('Enter a valid quantity.'); return; }
     try {
-      await POST('/api/tracking/log', { item_id: itemId, action: 'add', quantity: qty, price_per_unit: parseFloat(fd.get('price_per_unit')) || 0, notes: fd.get('notes') || null, date: fd.get('date') });
+      await POST('/api/tracking/log', { item_id: itemId, action: 'add', quantity: qty, price_per_unit: parseFloat(fd.get('price_per_unit')) || 0, notes: fd.get('notes') || null, date: fd.get('date'), member_id: currentUser.id });
       closeModal(); renderTracking();
     } catch (err) { alert('Error: ' + err.message); }
   };
@@ -811,7 +747,7 @@ function showUseStockModal(itemId, itemName, unit, currentStock) {
     const qty = parseFloat(fd.get('quantity'));
     if (!qty || qty <= 0) { alert('Enter a valid quantity.'); return; }
     try {
-      await POST('/api/tracking/log', { item_id: itemId, action: 'use', quantity: qty, notes: fd.get('notes') || null, date: fd.get('date') });
+      await POST('/api/tracking/log', { item_id: itemId, action: 'use', quantity: qty, notes: fd.get('notes') || null, date: fd.get('date'), member_id: currentUser.id });
       closeModal(); renderTracking();
     } catch (err) { alert('Error: ' + err.message); }
   };
@@ -969,7 +905,7 @@ function showSettleModal(toId = null, amount = '') {
     const amount = parseFloat(fd.get('amount'));
     if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
     try {
-      await POST('/api/settlements', { to_member_id: parseInt(fd.get('to_member_id')), amount, date: fd.get('date'), notes: fd.get('notes') || null });
+      await POST('/api/settlements', { from_member_id: currentUser.id, to_member_id: fd.get('to_member_id'), amount, date: fd.get('date'), notes: fd.get('notes') || null });
       closeModal(); renderSettle();
     } catch (err) { alert('Error: ' + err.message); }
   };
@@ -984,47 +920,30 @@ async function renderMembers() {
     members = await GET('/api/members');
     app.innerHTML = `
     <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
-      <h1 class="text-2xl font-bold text-gray-800">People</h1>
-
-      <!-- My account card -->
-      <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <div class="w-11 h-11 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-lg">
-              ${currentUser.name[0].toUpperCase()}
-            </div>
-            <div>
-              <p class="font-bold text-gray-800">${currentUser.name}</p>
-              <p class="text-xs text-blue-500 font-medium">Logged in</p>
-            </div>
-          </div>
-          <div class="flex flex-col gap-2 items-end">
-            <button onclick="showChangePasswordModal()" class="text-xs text-blue-600 border border-blue-200 bg-white px-3 py-1.5 rounded-lg font-medium">Change Password</button>
-            <button onclick="logout()" class="text-xs text-red-500 border border-red-200 bg-white px-3 py-1.5 rounded-lg font-medium">Log Out</button>
-          </div>
-        </div>
+      <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold text-gray-800">People</h1>
+        <button onclick="showAddMemberModal()" class="bg-blue-500 text-white text-sm px-4 py-2 rounded-xl font-semibold">+ Add</button>
       </div>
 
-      <!-- Members list -->
       ${members.length === 0
-        ? `<div class="text-center py-12"><p class="text-4xl mb-3">👥</p><p class="text-gray-500">No members yet</p></div>`
+        ? `<div class="text-center py-12"><p class="text-gray-500">No members yet</p></div>`
         : `<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-100">
             ${members.map((m, i) => `
               <div class="flex items-center px-4 py-3.5 ${m.id === currentUser.id ? 'bg-blue-50' : ''}">
                 <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-base ${m.id === currentUser.id ? 'bg-blue-500 text-white' : COLORS[i % COLORS.length]} flex-shrink-0">
                   ${m.name[0].toUpperCase()}
                 </div>
-                <div class="ml-3">
+                <div class="ml-3 flex-1">
                   <p class="font-semibold text-gray-800">${m.name} ${m.id === currentUser.id ? '<span class="text-xs text-blue-400">(you)</span>' : ''}</p>
-                  <p class="text-xs text-gray-400">Username: <span class="font-mono">${m.name.toLowerCase().replace(/\s+/g, '')}</span></p>
                 </div>
+                <button onclick="deleteMember('${m.id}','${m.name.replace(/'/g, "\\'")}')" class="text-red-400 text-sm border border-red-100 rounded-lg px-3 py-1.5">Remove</button>
               </div>
             `).join('')}
           </div>
           <p class="text-center text-xs text-gray-400">${members.length} ${members.length === 1 ? 'person' : 'people'} · South 11</p>`
       }
     </div>`;
-  } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
+  } catch (e) { app.innerHTML = errHtml(e); }
 }
 
 function showAddMemberModal() {
@@ -1033,11 +952,6 @@ function showAddMemberModal() {
       <div class="flex items-center justify-between mb-5">
         <h2 class="text-xl font-bold text-gray-800">Add Person</h2>
         <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
-      </div>
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-sm text-amber-700">
-        <p class="font-semibold">Auto-login created:</p>
-        <p class="text-xs mt-0.5 font-mono">username: <em>name in lowercase</em></p>
-        <p class="text-xs font-mono">password: <em>name@123</em></p>
       </div>
       <form id="member-form" class="space-y-4" novalidate>
         <div>
@@ -1062,94 +976,25 @@ function showAddMemberModal() {
 }
 
 async function deleteMember(id, name) {
-  if (!confirm(`Remove ${name}?\nThis will NOT delete their bills or splits.`)) return;
+  if (!confirm(`Remove ${name}?`)) return;
   try { await DEL(`/api/members/${id}`); members = await GET('/api/members'); renderMembers(); }
-  catch (err) { alert('Error: ' + err.message); }
-}
-
-// ── Admin ──────────────────────────────────────────────────────────────────
-async function renderAdmin() {
-  const app = document.getElementById('app');
-  members = await fetch('/api/members').then(r => r.json());
-  const COLORS = ['bg-blue-100 text-blue-600', 'bg-purple-100 text-purple-600', 'bg-green-100 text-green-600', 'bg-amber-100 text-amber-600', 'bg-rose-100 text-rose-600'];
-  app.innerHTML = `
-    <div class="px-4 pt-6 pb-6 space-y-4 slide-up">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-800">Admin</h1>
-          <p class="text-sm text-gray-400">Manage members</p>
-        </div>
-        <div class="flex gap-2">
-          <button onclick="showChangePasswordModal()" class="text-sm text-gray-600 border border-gray-200 rounded-xl px-3 py-2">Password</button>
-          <button onclick="logout()" class="text-sm text-red-500 border border-red-100 rounded-xl px-3 py-2">Logout</button>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-        <h2 class="font-semibold text-gray-700 mb-3">Add Member</h2>
-        <form id="admin-add-form" onsubmit="adminAddMember(event)" class="flex gap-2" novalidate>
-          <input name="name" type="text" placeholder="Full name" autocomplete="off"
-            class="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-base focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <button type="submit" class="bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold text-sm">Add</button>
-        </form>
-        <p class="text-xs text-gray-400 mt-2">Login: <span class="font-mono">name</span> / <span class="font-mono">name@123</span></p>
-      </div>
-
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 pt-3 pb-2">
-          <h2 class="font-semibold text-gray-700">Members <span class="text-gray-400 font-normal text-sm">(${members.length})</span></h2>
-        </div>
-        ${members.length === 0
-          ? `<p class="px-4 pb-4 text-sm text-gray-400">No members yet.</p>`
-          : `<div class="divide-y divide-gray-50">
-              ${members.map((m, i) => `
-              <div class="flex items-center gap-3 px-4 py-3">
-                <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${COLORS[i % COLORS.length]}">${m.name[0].toUpperCase()}</div>
-                <div class="flex-1 min-w-0">
-                  <p class="font-medium text-gray-800 text-sm">${m.name}</p>
-                  <p class="text-xs text-gray-400 font-mono">${m.name.toLowerCase().replace(/\s+/g, '')}</p>
-                </div>
-                <button onclick="adminRemoveMember('${m.id}','${m.name.replace(/'/g, "\\'")}')" class="text-red-400 text-sm border border-red-100 rounded-lg px-3 py-1.5 flex-shrink-0">Remove</button>
-              </div>`).join('')}
-            </div>`
-        }
-      </div>
-    </div>`;
-}
-
-async function adminAddMember(e) {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const name = fd.get('name').trim();
-  if (!name) return;
-  const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  try {
-    await POST('/api/members', { name });
-    e.target.reset();
-    await renderAdmin();
-  } catch (err) { alert('Error: ' + err.message); }
-  btn.disabled = false; btn.textContent = 'Add';
-}
-
-async function adminRemoveMember(id, name) {
-  if (!confirm(`Remove ${name}? They will no longer be able to log in.`)) return;
-  try { await DEL(`/api/members/${id}`); await renderAdmin(); }
   catch (err) { alert('Error: ' + err.message); }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  const token = localStorage.getItem('ghazal_token');
-  if (!token) { showLoginScreen(); return; }
-
   try {
-    const data = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
-    if (!data.ok) { localStorage.removeItem('ghazal_token'); showLoginScreen(); return; }
-    const { member } = await data.json();
-    currentUser = member;
     members = await fetch('/api/members').then(r => r.json());
-    navigate(currentUser.isAdmin ? 'admin' : 'dashboard');
+    const saved = localStorage.getItem('ghazal_user');
+    if (saved) {
+      const u = JSON.parse(saved);
+      if (members.find(m => (m._id || m.id) === u.id)) {
+        currentUser = u;
+        navigate('dashboard');
+        return;
+      }
+    }
+    showMemberPicker();
   } catch (e) {
     document.getElementById('app').innerHTML = `
       <div class="flex flex-col items-center justify-center h-screen gap-4 p-8">

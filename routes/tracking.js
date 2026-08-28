@@ -85,12 +85,15 @@ router.post('/log', async (req, res) => {
     const { item_id, action, quantity, split_members, price_per_unit, notes, date } = req.body;
     if (!item_id || !action || !quantity) return res.status(400).json({ error: 'item_id, action, quantity required' });
 
+    const { member_id: member_id_body } = req.body;
+    if (!member_id_body) return res.status(400).json({ error: 'member_id required' });
+
     const entry = await TrackedLog.create({
       item_id,
       action,
       quantity,
-      member_id: action === 'use' ? req.user.member_id : null,
-      paid_by: action === 'add' ? req.user.member_id : null,
+      member_id: action === 'use' ? member_id_body : null,
+      paid_by: action === 'add' ? member_id_body : null,
       split_members: split_members || [],
       price_per_unit: price_per_unit ?? null,
       notes: notes || null,
