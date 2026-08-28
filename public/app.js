@@ -901,23 +901,18 @@ async function renderMembers() {
     members = await GET('/api/members');
     app.innerHTML = `
     <div class="px-4 pt-6 pb-4 space-y-4 slide-up">
-      <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold text-gray-800">People</h1>
-        <button onclick="showAddMemberModal()" class="bg-blue-500 text-white text-sm px-4 py-2 rounded-xl font-semibold">+ Add</button>
-      </div>
-
+      <h1 class="text-2xl font-bold text-gray-800">People</h1>
       ${members.length === 0
         ? `<div class="text-center py-12"><p class="text-gray-500">No members yet</p></div>`
         : `<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-100">
             ${members.map((m, i) => `
-              <div class="flex items-center px-4 py-3.5 ${m.id === currentUser.id ? 'bg-blue-50' : ''}">
-                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-base ${m.id === currentUser.id ? 'bg-blue-500 text-white' : COLORS[i % COLORS.length]} flex-shrink-0">
+              <div class="flex items-center px-4 py-3.5 ${currentUser && m.id === currentUser.id ? 'bg-blue-50' : ''}">
+                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-base ${currentUser && m.id === currentUser.id ? 'bg-blue-500 text-white' : COLORS[i % COLORS.length]} flex-shrink-0">
                   ${m.name[0].toUpperCase()}
                 </div>
                 <div class="ml-3 flex-1">
-                  <p class="font-semibold text-gray-800">${m.name} ${m.id === currentUser.id ? '<span class="text-xs text-blue-400">(you)</span>' : ''}</p>
+                  <p class="font-semibold text-gray-800">${m.name} ${currentUser && m.id === currentUser.id ? '<span class="text-xs text-blue-400">(you)</span>' : ''}</p>
                 </div>
-                <button onclick="deleteMember('${m.id}','${m.name.replace(/'/g, "\\'")}')" class="text-red-400 text-sm border border-red-100 rounded-lg px-3 py-1.5">Remove</button>
               </div>
             `).join('')}
           </div>
@@ -927,43 +922,76 @@ async function renderMembers() {
   } catch (e) { app.innerHTML = errHtml(e); }
 }
 
-function showAddMemberModal() {
-  openModal(`
-    <div>
-      <div class="flex items-center justify-between mb-5">
-        <h2 class="text-xl font-bold text-gray-800">Add Person</h2>
-        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
-      </div>
-      <form id="member-form" class="space-y-4" novalidate>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Name</label>
-          <input name="name" type="text" placeholder="Enter full name" required autofocus
-            class="w-full border border-gray-200 rounded-xl px-3 py-3 bg-gray-50 text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+// ── Admin panel ────────────────────────────────────────────────────────────
+async function renderAdminPage() {
+  document.querySelector('nav').style.display = 'none';
+  const app = document.getElementById('app');
+  try {
+    members = await fetch('/api/members').then(r => r.json());
+    const ACOLORS = ['bg-blue-100 text-blue-600','bg-purple-100 text-purple-600','bg-green-100 text-green-600','bg-amber-100 text-amber-600','bg-rose-100 text-rose-600'];
+    app.innerHTML = `
+      <div class="px-4 pt-8 pb-8 space-y-5 slide-up max-w-lg mx-auto">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="text-2xl font-bold text-gray-800">Admin</h1>
+            <p class="text-sm text-gray-400">Manage members</p>
+          </div>
+          <a href="/" class="text-sm text-blue-500 border border-blue-200 rounded-xl px-3 py-2">← Back to app</a>
         </div>
-        <button type="submit" class="w-full bg-blue-500 text-white py-3.5 rounded-xl font-semibold">Add to Room</button>
-      </form>
-    </div>
-  `);
-  document.getElementById('member-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const name = new FormData(e.target).get('name').trim();
-    if (!name) { alert('Name is required.'); return; }
-    try {
-      await POST('/api/members', { name });
-      members = await GET('/api/members');
-      closeModal(); renderMembers();
-    } catch (err) { alert('Error: ' + err.message); }
-  };
+
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <h2 class="font-semibold text-gray-700 mb-3">Add Member</h2>
+          <form id="admin-add-form" onsubmit="adminAddMember(event)" class="flex gap-2" novalidate>
+            <input name="name" type="text" placeholder="Full name" autocomplete="off"
+              class="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-base focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button type="submit" class="bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold text-sm">Add</button>
+          </form>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="px-4 pt-3 pb-2">
+            <h2 class="font-semibold text-gray-700">Members <span class="text-gray-400 font-normal text-sm">(${members.length})</span></h2>
+          </div>
+          ${members.length === 0
+            ? `<p class="px-4 pb-4 text-sm text-gray-400">No members yet.</p>`
+            : `<div class="divide-y divide-gray-50">
+                ${members.map((m, i) => `
+                <div class="flex items-center gap-3 px-4 py-3">
+                  <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${ACOLORS[i % ACOLORS.length]}">${m.name[0].toUpperCase()}</div>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-medium text-gray-800 text-sm">${m.name}</p>
+                  </div>
+                  <button onclick="adminRemoveMember('${m.id}','${m.name.replace(/'/g, "\\'")}')" class="text-red-400 text-sm border border-red-100 rounded-lg px-3 py-1.5 flex-shrink-0">Remove</button>
+                </div>`).join('')}
+              </div>`
+          }
+        </div>
+      </div>`;
+  } catch (e) {
+    app.innerHTML = `<div class="p-8 text-center text-red-500">${e.message}</div>`;
+  }
 }
 
-async function deleteMember(id, name) {
+async function adminAddMember(e) {
+  e.preventDefault();
+  const name = new FormData(e.target).get('name').trim();
+  if (!name) return;
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try { await POST('/api/members', { name }); e.target.reset(); await renderAdminPage(); }
+  catch (err) { alert('Error: ' + err.message); btn.disabled = false; btn.textContent = 'Add'; }
+}
+
+async function adminRemoveMember(id, name) {
   if (!confirm(`Remove ${name}?`)) return;
-  try { await DEL(`/api/members/${id}`); members = await GET('/api/members'); renderMembers(); }
+  try { await DEL(`/api/members/${id}`); await renderAdminPage(); }
   catch (err) { alert('Error: ' + err.message); }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
+  if (window.location.pathname === '/admin') { renderAdminPage(); return; }
+
   try {
     members = await fetch('/api/members').then(r => r.json());
     const saved = localStorage.getItem('ghazal_user');
