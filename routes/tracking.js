@@ -86,7 +86,7 @@ router.get('/history', async (req, res) => {
       .populate('item_id', 'name unit')
       .populate('member_id', 'name')
       .populate('paid_by', 'name')
-      .sort({ created_at: -1 })
+      .sort({ date: -1, created_at: -1 })
       .limit(200);
     res.json(logs.map(l => ({
       ...fmtLog(l),
