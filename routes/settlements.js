@@ -22,7 +22,7 @@ async function getBalances() {
   // FIFO: for each item, consume add-batches in order when someone uses stock
   const items = await TrackedItem.find();
   for (const item of items) {
-    const logs = await TrackedLog.find({ item_id: item._id }).sort({ created_at: 1 });
+    const logs = await TrackedLog.find({ item_id: item._id }).sort({ date: 1, created_at: 1 });
     const queue = []; // { paid_by, remaining, price }
     for (const log of logs) {
       if (log.action === 'add' && log.paid_by) {
