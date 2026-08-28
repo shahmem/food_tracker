@@ -541,37 +541,121 @@ async function renderTracking() {
   } catch (e) { if (e.message !== 'Not authenticated') app.innerHTML = errHtml(e); }
 }
 
-async function showTrackingHistory() {
-  openModal(`<div><div class="flex items-center justify-between mb-4"><h2 class="text-xl font-bold text-gray-800">Stock History</h2><button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button></div><div id="history-list" class="space-y-1">${loading()}</div></div>`);
-  try {
-    const logs = await GET('/api/tracking/history');
-    const list = document.getElementById('history-list');
-    if (!list) return;
-    if (logs.length === 0) { list.innerHTML = `<p class="text-center text-gray-400 py-8">No history yet</p>`; return; }
+let _historyLogs = [];
+let _historyFilter = 'all';
+let _historySort = 'newest';
 
-    let lastDate = null;
-    list.innerHTML = logs.map(l => {
-      const dateHeader = l.date !== lastDate ? `<p class="text-xs font-semibold text-gray-400 uppercase pt-3 pb-1">${fmtDate(l.date)}</p>` : '';
-      lastDate = l.date;
-      const isAdd = l.action === 'add';
-      const who = isAdd ? (l.paid_by_name || '—') : (l.member_name || '—');
-      const cost = isAdd && l.price_per_unit ? ` · ₹${(l.quantity * l.price_per_unit).toFixed(2)}` : '';
-      return `${dateHeader}
-        <div class="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${isAdd ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}">
-            ${isAdd ? '+' : '−'}
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-semibold text-gray-800">${l.item_name || '—'} <span class="font-normal text-gray-500">${isAdd ? 'added by' : 'used by'} ${who}</span></p>
-            <p class="text-xs text-gray-400">${l.quantity} ${l.item_unit || ''}${cost}${l.notes ? ' · ' + l.notes : ''}</p>
-          </div>
-          <span class="text-xs text-gray-400 flex-shrink-0">${isAdd ? '+' : '−'}${l.quantity}</span>
-        </div>`;
-    }).join('');
+function fifoUseCost(logs, targetLog) {
+  // Replay FIFO up to and including targetLog to compute cost of a use entry
+  const queue = [];
+  let cost = null;
+  for (const l of logs) {
+    if (l.action === 'add' && l.paid_by_name != null) {
+      const price = l.price_per_unit ?? 0;
+      queue.push({ remaining: l.quantity, price });
+    } else if (l.action === 'use') {
+      let qty = l.quantity;
+      let entryCost = 0;
+      const snap = queue.map(b => ({ ...b }));
+      while (qty > 0 && snap.length > 0) {
+        const batch = snap[0];
+        const consumed = Math.min(qty, batch.remaining);
+        entryCost += consumed * batch.price;
+        batch.remaining -= consumed;
+        qty -= consumed;
+        if (batch.remaining <= 0) snap.shift();
+      }
+      // consume from real queue
+      let q2 = l.quantity;
+      while (q2 > 0 && queue.length > 0) {
+        const b = queue[0];
+        const c = Math.min(q2, b.remaining);
+        b.remaining -= c; q2 -= c;
+        if (b.remaining <= 0) queue.shift();
+      }
+      if (l.id === targetLog.id) { cost = entryCost; break; }
+    }
+  }
+  return cost;
+}
+
+async function showTrackingHistory() {
+  openModal(`
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xl font-bold text-gray-800">Stock History</h2>
+        <button onclick="closeModal()" class="text-gray-400 text-3xl leading-none">&times;</button>
+      </div>
+      <div id="history-controls" class="flex gap-2 mb-3"></div>
+      <div id="history-list" class="space-y-1">${loading()}</div>
+    </div>`);
+
+  try {
+    _historyLogs = await GET('/api/tracking/history');
+    _historyFilter = 'all';
+    _historySort = 'newest';
+    renderHistoryList();
   } catch (e) {
     const list = document.getElementById('history-list');
     if (list) list.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`;
   }
+}
+
+function renderHistoryList() {
+  const controls = document.getElementById('history-controls');
+  const list = document.getElementById('history-list');
+  if (!controls || !list) return;
+
+  const itemNames = ['all', ...new Set(_historyLogs.map(l => l.item_name).filter(Boolean))];
+
+  controls.innerHTML = `
+    <select onchange="_historyFilter=this.value;renderHistoryList()"
+      class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
+      ${itemNames.map(n => `<option value="${n}" ${_historyFilter===n?'selected':''}>${n==='all'?'All items':n}</option>`).join('')}
+    </select>
+    <select onchange="_historySort=this.value;renderHistoryList()"
+      class="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:outline-none">
+      <option value="newest" ${_historySort==='newest'?'selected':''}>Newest first</option>
+      <option value="oldest" ${_historySort==='oldest'?'selected':''}>Oldest first</option>
+    </select>`;
+
+  let logs = _historyLogs.filter(l => _historyFilter === 'all' || l.item_name === _historyFilter);
+  if (_historySort === 'oldest') logs = [...logs].reverse();
+
+  if (logs.length === 0) { list.innerHTML = `<p class="text-center text-gray-400 py-8">No entries found</p>`; return; }
+
+  // Build per-item log lists (chronological) for FIFO cost calc
+  const byItem = {};
+  _historyLogs.slice().reverse().forEach(l => {
+    if (!byItem[l.item_id]) byItem[l.item_id] = [];
+    byItem[l.item_id].push(l);
+  });
+
+  let lastDate = null;
+  list.innerHTML = logs.map(l => {
+    const dateHeader = l.date !== lastDate ? `<p class="text-xs font-semibold text-gray-400 uppercase pt-3 pb-1 first:pt-0">${fmtDate(l.date)}</p>` : '';
+    lastDate = l.date;
+    const isAdd = l.action === 'add';
+    const who = isAdd ? (l.paid_by_name || '—') : (l.member_name || '—');
+    let costStr = '';
+    if (isAdd && l.price_per_unit) {
+      costStr = `₹${(l.quantity * l.price_per_unit).toFixed(2)}`;
+    } else if (!isAdd && byItem[l.item_id]) {
+      const cost = fifoUseCost(byItem[l.item_id], l);
+      if (cost != null && cost > 0) costStr = `₹${cost.toFixed(2)}`;
+    }
+    return `${dateHeader}
+      <div class="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${isAdd ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}">
+          ${isAdd ? '+' : '−'}
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-gray-800">${l.item_name || '—'} <span class="font-normal text-gray-500">${isAdd ? 'added by' : 'used by'} ${who}</span></p>
+          <p class="text-xs text-gray-400">${l.quantity} ${l.item_unit || ''}${costStr ? ' · ' + costStr : ''}${l.notes ? ' · ' + l.notes : ''}</p>
+        </div>
+        <span class="text-xs font-semibold flex-shrink-0 ${isAdd ? 'text-green-500' : 'text-orange-400'}">${isAdd ? '+' : '−'}${l.quantity}</span>
+      </div>`;
+  }).join('');
 }
 
 function showAddItemModal() {
